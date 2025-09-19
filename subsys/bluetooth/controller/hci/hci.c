@@ -1739,10 +1739,17 @@ static void le_create_big(struct net_buf *buf, struct net_buf **evt)
 	max_sdu = sys_le16_to_cpu(cmd->max_sdu);
 	max_latency = sys_le16_to_cpu(cmd->max_latency);
 
+#ifdef CONFIG_GRPTLK
+	status = ll_grptlk_create(big_handle, adv_handle, cmd->num_bis,
+			       sdu_interval, max_sdu, max_latency, cmd->rtn,
+			       cmd->phy, cmd->packing, cmd->framing,
+			       cmd->encryption, cmd->bcode);
+#else
 	status = ll_big_create(big_handle, adv_handle, cmd->num_bis,
 			       sdu_interval, max_sdu, max_latency, cmd->rtn,
 			       cmd->phy, cmd->packing, cmd->framing,
 			       cmd->encryption, cmd->bcode);
+#endif /* CONFIG_GRPTLK */
 
 	*evt = cmd_status(status);
 }
@@ -6128,13 +6135,21 @@ int hci_iso_handle(struct net_buf *buf, struct net_buf **evt)
 
 		/* Get BIS stream handle and stream context */
 		stream_handle = LL_BIS_ADV_IDX_FROM_HANDLE(handle);
+#ifdef CONFIG_GRPTLK
+		stream = ull_adv_grptlk_stream_get(stream_handle);
+#else
 		stream = ull_adv_iso_stream_get(stream_handle);
+#endif  /* CONFIG_GRPTLK */
 		if (!stream || !stream->dp) {
 			LOG_ERR("Invalid BIS stream");
 			return -EINVAL;
 		}
 
+#ifdef CONFIG_GRPTLK
+		adv_iso = ull_adv_grptlk_by_stream_get(stream_handle);
+#else
 		adv_iso = ull_adv_iso_by_stream_get(stream_handle);
+#endif  /* CONFIG_GRPTLK */
 		if (!adv_iso) {
 			LOG_ERR("No BIG associated with stream handle");
 			return -EINVAL;
