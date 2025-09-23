@@ -473,6 +473,8 @@ uint8_t ll_setup_iso_path(uint16_t handle, uint8_t path_dir, uint8_t path_id,
 				sync_stream->dp = dp;
 			}
 
+			// TODO: do we need to set the dp here?
+
 			dp->sink_hdl = sink_handle;
 			isoal_sink_enable(sink_handle);
 		} else {
@@ -485,8 +487,13 @@ uint8_t ll_setup_iso_path(uint16_t handle, uint8_t path_dir, uint8_t path_id,
 #endif /* !CONFIG_BT_CTLR_SYNC_ISO && !CONFIG_BT_CTLR_CONN_ISO */
 
 #if defined(CONFIG_BT_CTLR_ADV_ISO) || defined(CONFIG_BT_CTLR_CONN_ISO)
-	} else if ((path_dir == BT_HCI_DATAPATH_DIR_HOST_TO_CTLR) &&
-		   (cis || adv_stream)) {
+#ifdef CONFIG_GRPTLK
+	} else if (path_dir == BT_HCI_DATAPATH_DIR_HOST_TO_CTLR) {
+		role = ISOAL_ROLE_BROADCAST_SOURCE;
+#else
+	} else if ((path_dir == BT_HCI_DATAPATH_DIR_HOST_TO_CTLR) && (cis || adv_stream)) {
+#endif
+	
 		isoal_source_handle_t source_handle;
 		isoal_status_t err;
 
@@ -531,6 +538,8 @@ uint8_t ll_setup_iso_path(uint16_t handle, uint8_t path_dir, uint8_t path_id,
 			if (IS_ENABLED(CONFIG_BT_CTLR_ADV_ISO) && adv_stream != NULL) {
 				adv_stream->dp = dp;
 			}
+
+			// TODO: do we need to set the dp here?
 
 			dp->source_hdl = source_handle;
 			isoal_source_enable(source_handle);
