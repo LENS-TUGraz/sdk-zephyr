@@ -511,13 +511,19 @@ static void isr_tx_common(void *param, radio_isr_cb_t isr_tx, radio_isr_cb_t isr
 			bis = lll->bis_curr;
 
 		} else if (lll->bis_curr < lll->num_bis) {
-			lll->bis_curr++;
-			lll->ptc_curr = 0U;
-			lll->irc_curr = 1U;
-			/* transmit the (bn_curr)th PDU of bis_curr */
-			lll->bn_curr = 1U;
+			/* Suppress all BIS > 1 TX packets */
+			if (lll->bis_curr == 1U) {
+				/* signal no more subevents */
+				is_ctrl = 1U;
+			} else {
+				lll->bis_curr++;
+				lll->ptc_curr = 0U;
+				lll->irc_curr = 1U;
+				/* transmit the (bn_curr)th PDU of bis_curr */
+				lll->bn_curr = 1U;
 
-			bis = lll->bis_curr;
+				bis = lll->bis_curr;
+			}
 		} else {
 			is_ctrl = 1U;
 		}
