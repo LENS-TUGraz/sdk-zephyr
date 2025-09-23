@@ -415,8 +415,12 @@ uint8_t ll_setup_iso_path(uint16_t handle, uint8_t path_dir, uint8_t path_id,
 	if (false) {
 
 #if defined(CONFIG_BT_CTLR_SYNC_ISO) || defined(CONFIG_BT_CTLR_CONN_ISO)
-	} else if ((path_dir == BT_HCI_DATAPATH_DIR_CTLR_TO_HOST) &&
-		   (cis || sync_stream)) {
+#ifdef CONFIG_GRPTLK
+	} else if (path_dir == BT_HCI_DATAPATH_DIR_CTLR_TO_HOST) {
+		role = ISOAL_ROLE_BROADCAST_SINK;
+#else
+	} else if ((path_dir == BT_HCI_DATAPATH_DIR_CTLR_TO_HOST) && (cis || sync_stream)) {
+#endif
 		isoal_sink_handle_t sink_handle;
 		isoal_status_t err;
 
