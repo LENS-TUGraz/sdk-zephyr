@@ -72,6 +72,10 @@ if(CONFIG_BT_OBSERVER)
     CONFIG_BT_CTLR_SYNC_ISO
     ll_sw/ull_sync_iso.c
     )
+  zephyr_library_sources_ifdef(
+    CONFIG_GRPTLK
+    ll_sw/ull_sync_grptlk.c
+    )
 endif()
 
 if(CONFIG_BT_CONN)

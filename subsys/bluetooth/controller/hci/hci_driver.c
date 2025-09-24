@@ -601,7 +601,11 @@ static inline struct net_buf *encode_node(struct node_rx_pdu *node_rx,
 			isoal_status_t err;
 
 			stream_handle = LL_BIS_SYNC_IDX_FROM_HANDLE(node_rx->hdr.handle);
+#ifdef CONFIG_GRPTLK
+			stream = ull_sync_grptlk_stream_get(stream_handle);
+#else
 			stream = ull_sync_iso_stream_get(stream_handle);
+#endif /* CONFIG_GRPTLK */
 
 			/* Check validity of the data path sink. FIXME: A channel disconnect race
 			 * may cause ISO data pending without valid data path.

@@ -356,12 +356,20 @@ uint8_t ll_setup_iso_path(uint16_t handle, uint8_t path_dir, uint8_t path_id,
 		uint16_t stream_handle;
 
 		stream_handle = LL_BIS_SYNC_IDX_FROM_HANDLE(handle);
+#ifdef CONFIG_GRPTLK
+		sync_stream = ull_sync_grptlk_stream_get(stream_handle);
+#else
 		sync_stream = ull_sync_iso_stream_get(stream_handle);
+#endif /* CONFIG_GRPTLK */
 		if (!sync_stream || sync_stream->dp) {
 			return BT_HCI_ERR_CMD_DISALLOWED;
 		}
 
+#ifdef CONFIG_GRPTLK
+		sync_iso = ull_sync_grptlk_by_stream_get(stream_handle);
+#else
 		sync_iso = ull_sync_iso_by_stream_get(stream_handle);
+#endif /* CONFIG_GRPTLK */
 		lll_iso = &sync_iso->lll;
 
 		role = ISOAL_ROLE_BROADCAST_SINK;
@@ -646,7 +654,11 @@ uint8_t ll_remove_iso_path(uint16_t handle, uint8_t path_dir)
 		}
 
 		stream_handle = LL_BIS_SYNC_IDX_FROM_HANDLE(handle);
+#ifdef CONFIG_GRPTLK
+		sync_stream = ull_sync_grptlk_stream_get(stream_handle);
+#else
 		sync_stream = ull_sync_iso_stream_get(stream_handle);
+#endif /* CONFIG_GRPTLK */
 		if (!sync_stream) {
 			return BT_HCI_ERR_CMD_DISALLOWED;
 		}
@@ -698,7 +710,11 @@ static isoal_status_t ll_iso_test_sdu_alloc(const struct isoal_sink *sink_ctx,
 			uint16_t stream_handle;
 
 			stream_handle = LL_BIS_SYNC_IDX_FROM_HANDLE(handle);
+#ifdef CONFIG_GRPTLK
+			sync_stream = ull_sync_grptlk_stream_get(stream_handle);
+#else
 			sync_stream = ull_sync_iso_stream_get(stream_handle);
+#endif /* CONFIG_GRPTLK */
 			LL_ASSERT(sync_stream);
 
 			sync_stream->test_mode->sdu_counter =
@@ -744,10 +760,18 @@ static isoal_status_t ll_iso_test_sdu_emit(const struct isoal_sink             *
 		uint16_t stream_handle;
 
 		stream_handle = LL_BIS_SYNC_IDX_FROM_HANDLE(handle);
+#ifdef CONFIG_GRPTLK
+		sync_stream = ull_sync_grptlk_stream_get(stream_handle);
+#else
 		sync_stream = ull_sync_iso_stream_get(stream_handle);
+#endif /* CONFIG_GRPTLK */
 		LL_ASSERT(sync_stream);
 
+#ifdef CONFIG_GRPTLK
+		sync_iso = ull_sync_grptlk_by_stream_get(stream_handle);
+#else
 		sync_iso = ull_sync_iso_by_stream_get(stream_handle);
+#endif /* CONFIG_GRPTLK */
 
 		test_mode_rx = sync_stream->test_mode;
 		max_sdu = sync_iso->lll.max_sdu;
@@ -903,7 +927,11 @@ uint8_t ll_iso_receive_test(uint16_t handle, uint8_t payload_type)
 		struct lll_sync_iso *lll_iso;
 
 		stream_handle = LL_BIS_SYNC_IDX_FROM_HANDLE(handle);
+#ifdef CONFIG_GRPTLK
+		sync_stream = ull_sync_grptlk_stream_get(stream_handle);
+#else
 		sync_stream = ull_sync_iso_stream_get(stream_handle);
+#endif /* CONFIG_GRPTLK */
 		if (!sync_stream) {
 			return BT_HCI_ERR_UNKNOWN_CONN_ID;
 		}
@@ -913,7 +941,11 @@ uint8_t ll_iso_receive_test(uint16_t handle, uint8_t payload_type)
 			return BT_HCI_ERR_CMD_DISALLOWED;
 		}
 
+#ifdef CONFIG_GRPTLK
+		sync_iso = ull_sync_grptlk_by_stream_get(stream_handle);
+#else
 		sync_iso = ull_sync_iso_by_stream_get(stream_handle);
+#endif /* CONFIG_GRPTLK */
 		lll_iso = &sync_iso->lll;
 
 		test_mode_rx = sync_stream->test_mode;
@@ -1016,7 +1048,11 @@ uint8_t ll_iso_read_test_counters(uint16_t handle, uint32_t *received_cnt,
 		uint16_t stream_handle;
 
 		stream_handle = LL_BIS_SYNC_IDX_FROM_HANDLE(handle);
+#ifdef CONFIG_GRPTLK
+		sync_stream = ull_sync_grptlk_stream_get(stream_handle);
+#else
 		sync_stream = ull_sync_iso_stream_get(stream_handle);
+#endif /* CONFIG_GRPTLK */
 		if (!sync_stream) {
 			return BT_HCI_ERR_UNKNOWN_CONN_ID;
 		}
@@ -1403,7 +1439,11 @@ uint8_t ll_iso_test_end(uint16_t handle, uint32_t *received_cnt,
 		uint16_t stream_handle;
 
 		stream_handle = LL_BIS_SYNC_IDX_FROM_HANDLE(handle);
+#ifdef CONFIG_GRPTLK
+		sync_stream = ull_sync_grptlk_stream_get(stream_handle);
+#else
 		sync_stream = ull_sync_iso_stream_get(stream_handle);
+#endif /* CONFIG_GRPTLK */
 		if (!sync_stream) {
 			return BT_HCI_ERR_UNKNOWN_CONN_ID;
 		}
@@ -1708,7 +1748,11 @@ static void iso_rx_demux(void *param)
 					uint16_t stream_handle;
 
 					stream_handle = LL_BIS_SYNC_IDX_FROM_HANDLE(handle);
+#ifdef CONFIG_GRPTLK
+					sync_stream = ull_sync_grptlk_stream_get(stream_handle);
+#else
 					sync_stream = ull_sync_iso_stream_get(stream_handle);
+#endif /* CONFIG_GRPTLK */
 					dp = sync_stream ? sync_stream->dp : NULL;
 #endif /* CONFIG_BT_CTLR_SYNC_ISO */
 				}
@@ -2077,7 +2121,11 @@ void ull_iso_resume_ticker_start(struct lll_event *resume_event,
 				uint16_t stream_idx;
 
 				stream_idx = LL_BIS_SYNC_IDX_FROM_HANDLE(stream_handle);
-				sync_iso = ull_sync_iso_by_stream_get(stream_idx);
+#ifdef CONFIG_GRPTLK
+				sync_iso = ull_sync_grptlk_by_stream_get(stream_handle);
+#else
+				sync_iso = ull_sync_iso_by_stream_get(stream_handle);
+#endif /* CONFIG_GRPTLK */
 				phy = sync_iso->lll.phy;
 #endif /* CONFIG_BT_CTLR_SYNC_ISO */
 			} else {

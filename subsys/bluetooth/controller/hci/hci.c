@@ -1881,9 +1881,15 @@ static void le_big_create_sync(struct net_buf *buf, struct net_buf **evt)
 	sync_handle = sys_le16_to_cpu(cmd->sync_handle);
 	sync_timeout = sys_le16_to_cpu(cmd->sync_timeout);
 
+#ifdef CONFIG_GRPTLK
+	status = ll_grptlk_sync_create(cmd->big_handle, sync_handle,
+					  cmd->encryption, cmd->bcode, cmd->mse,
+					  sync_timeout, cmd->num_bis, cmd->bis);
+#else
 	status = ll_big_sync_create(cmd->big_handle, sync_handle,
 				    cmd->encryption, cmd->bcode, cmd->mse,
 				    sync_timeout, cmd->num_bis, cmd->bis);
+#endif /* CONFIG_GRPTLK */
 
 	*evt = cmd_status(status);
 }

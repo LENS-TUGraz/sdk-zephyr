@@ -682,7 +682,11 @@ int ll_init(struct k_sem *sem_rx)
 	}
 
 #if defined(CONFIG_BT_CTLR_SYNC_ISO)
+#ifdef CONFIG_GRPTLK
+	err = ull_sync_grptlk_init();
+#else
 	err = ull_sync_iso_init();
+#endif /* CONFIG_GRPTLK */
 	if (err) {
 		return err;
 	}
@@ -825,7 +829,11 @@ void ll_reset(void)
 #if defined(CONFIG_BT_CTLR_SYNC_PERIODIC)
 #if defined(CONFIG_BT_CTLR_SYNC_ISO)
 	/* Reset sync iso sets */
+#ifdef CONFIG_GRPTLK
+	err = ull_sync_grptlk_reset();
+#else
 	err = ull_sync_iso_reset();
+#endif /* CONFIG_GRPTLK */
 	LL_ASSERT(!err);
 #endif /* CONFIG_BT_CTLR_SYNC_ISO */
 
@@ -1673,7 +1681,11 @@ void ll_rx_mem_release(void **node_rx)
 			struct ll_sync_iso_set *sync_iso =
 				(void *)rx_free->rx_ftr.param;
 
+#ifdef CONFIG_GRPTLK
+			ull_sync_grptlk_stream_release(sync_iso);
+#else
 			ull_sync_iso_stream_release(sync_iso);
+#endif /* CONFIG_GRPTLK */
 		}
 		break;
 #endif /* CONFIG_BT_CTLR_SYNC_ISO */
@@ -3073,15 +3085,27 @@ static inline void rx_demux_event_done(memq_link_t *link,
 
 #if defined(CONFIG_BT_CTLR_SYNC_ISO)
 	case EVENT_DONE_EXTRA_TYPE_SYNC_ISO_ESTAB:
+#ifdef CONFIG_GRPTLK
+		ull_sync_grptlk_estab_done(done);
+#else
 		ull_sync_iso_estab_done(done);
+#endif /* CONFIG_GRPTLK */
 		break;
 
 	case EVENT_DONE_EXTRA_TYPE_SYNC_ISO:
+#ifdef CONFIG_GRPTLK
+		ull_sync_grptlk_done(done);
+#else
 		ull_sync_iso_done(done);
+#endif /* CONFIG_GRPTLK */
 		break;
 
 	case EVENT_DONE_EXTRA_TYPE_SYNC_ISO_TERMINATE:
+#ifdef CONFIG_GRPTLK
+		ull_sync_grptlk_done_terminate(done);
+#else
 		ull_sync_iso_done_terminate(done);
+#endif /* CONFIG_GRPTLK */
 		break;
 #endif /* CONFIG_BT_CTLR_SYNC_ISO */
 #endif /* CONFIG_BT_CTLR_SYNC_PERIODIC */
