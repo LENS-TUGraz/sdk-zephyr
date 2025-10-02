@@ -1492,8 +1492,7 @@ int ll_iso_tx_mem_enqueue(uint16_t handle, void *node_tx, void *link)
 		cis = ll_conn_iso_stream_get(handle);
 		memq_enqueue(link, node_tx, &cis->lll.memq_tx.tail);
 
-	} else if (IS_ENABLED(CONFIG_BT_CTLR_ADV_ISO) &&
-		   IS_ADV_ISO_HANDLE(handle)) {
+	} else if (IS_ENABLED(CONFIG_BT_CTLR_ADV_ISO) && IS_ADV_ISO_HANDLE(handle)) {
 		struct lll_adv_iso_stream *stream;
 		uint16_t stream_handle;
 
@@ -1502,9 +1501,20 @@ int ll_iso_tx_mem_enqueue(uint16_t handle, void *node_tx, void *link)
 		stream = ull_adv_grptlk_stream_get(stream_handle);
 #else
 		stream = ull_adv_iso_stream_get(stream_handle);
-#endif
+#endif /* CONFIG_GRPTLK */
 		memq_enqueue(link, node_tx, &stream->memq_tx.tail);
 
+#ifdef CONFIG_GRPTLK
+	} else if (IS_ENABLED(CONFIG_BT_CTLR_ADV_ISO) && IS_SYNC_ISO_HANDLE(handle)) {
+		struct lll_sync_iso_stream *sync_stream;
+		uint16_t stream_handle;
+
+		/* Get BIS stream handle (-1 since we only have n-1 RX streams) */
+		stream_handle = handle - LL_BIS_SYNC_HANDLE_BASE - 1U;
+
+		sync_stream = ull_sync_grptlk_stream_get(stream_handle);
+		memq_enqueue(link, node_tx, &sync_stream->memq_tx.tail);
+#endif /* CONFIG_GRPTLK */
 	} else {
 		return -EINVAL;
 	}

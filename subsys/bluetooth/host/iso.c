@@ -2751,6 +2751,12 @@ static int big_init_bis(struct bt_iso_big *big, struct bt_iso_chan **bis_channel
 		iso_conn->big_handle = big->handle;
 		iso_conn->info.type =
 			broadcaster ? BT_ISO_CHAN_TYPE_BROADCASTER : BT_ISO_CHAN_TYPE_SYNC_RECEIVER;
+#ifdef CONFIG_GRPTLK
+		if (i > 0) {
+			iso_conn->info.type = broadcaster ? BT_ISO_CHAN_TYPE_SYNC_RECEIVER
+							  : BT_ISO_CHAN_TYPE_BROADCASTER;
+		}
+#endif /* CONFIG_GRPTLK */
 		iso_conn->bis_id = bt_conn_index(bis->iso);
 
 		bt_iso_chan_add(bis->iso, bis);

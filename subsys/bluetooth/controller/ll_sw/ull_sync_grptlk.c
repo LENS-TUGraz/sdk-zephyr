@@ -220,6 +220,13 @@ uint8_t ll_grptlk_sync_create(uint8_t big_handle, uint16_t sync_handle, uint8_t 
 		stream->test_mode = &test_mode[i];
 		memset(stream->test_mode, 0, sizeof(struct ll_iso_rx_test_mode));
 		lll->stream_handle[i] = sync_iso_stream_handle_get(stream);
+
+		if (!stream->link_tx_free) {
+			stream->link_tx_free = &stream->link_tx;
+		}
+		memq_init(stream->link_tx_free, &stream->memq_tx.head,
+			  &stream->memq_tx.tail);
+		stream->link_tx_free = NULL;
 	}
 
 	/* Initialize ULL and LLL headers */
@@ -381,10 +388,17 @@ void ull_sync_grptlk_stream_release(struct ll_sync_iso_set *sync_iso)
 		struct lll_sync_iso_stream *stream;
 		struct ll_iso_datapath *dp;
 		uint16_t stream_handle;
+		memq_link_t *link;
 
 		stream_handle = lll->stream_handle[lll->stream_count];
 		stream = ull_sync_grptlk_stream_get(stream_handle);
 		LL_ASSERT(stream);
+
+		LL_ASSERT(!stream->link_tx_free);
+		link = memq_deinit(&stream->memq_tx.head,
+				   &stream->memq_tx.tail);
+		LL_ASSERT(link);
+		stream->link_tx_free = link;
 
 		dp = stream->dp;
 		if (dp) {

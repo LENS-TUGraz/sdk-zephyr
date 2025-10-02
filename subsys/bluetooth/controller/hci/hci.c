@@ -6276,6 +6276,49 @@ int hci_iso_handle(struct net_buf *buf, struct net_buf **evt)
 		}
 
 		return 0;
+
+	#ifdef CONFIG_GRPTLK
+	} else if (IS_SYNC_ISO_HANDLE(handle)) {
+		struct lll_sync_iso_stream *sync_stream;
+		struct ll_sync_iso_set *sync_iso;
+		struct lll_sync_iso *lll_iso;
+		uint16_t stream_handle;
+
+		/* Get BIS stream handle (-1 since we only have n-1 RX streams) */
+		stream_handle = handle - LL_BIS_SYNC_HANDLE_BASE - 1U;
+
+		sync_stream = ull_sync_grptlk_stream_get(stream_handle);
+		if (!sync_stream || !sync_stream->dp) {
+			LOG_ERR("Invalid BIS stream");
+			return -EINVAL;
+		}
+
+		sync_iso = ull_sync_grptlk_by_stream_get(stream_handle);
+		if (!sync_iso) {
+			LOG_ERR("No BIG associated with stream handle");
+			return -EINVAL;
+		}
+
+		lll_iso = &sync_iso->lll;
+
+		// printk("SDU %x%x%x%x\n", ((uint8_t *)sdu_frag_tx.dbuf)[3],
+	    //    ((uint8_t *)sdu_frag_tx.dbuf)[2],
+	    //    ((uint8_t *)sdu_frag_tx.dbuf)[1],
+	    //    ((uint8_t *)sdu_frag_tx.dbuf)[0]);
+
+		isoal_status_t isoal_status =
+			isoal_tx_sdu_fragment(sync_stream->dp->source_hdl, &sdu_frag_tx);
+		
+		if (isoal_status) {
+			if (isoal_status & ISOAL_STATUS_ERR_PDU_ALLOC) {
+				data_buf_overflow(evt, BT_OVERFLOW_LINK_ISO);
+				return -ENOBUFS;
+			}
+
+			return -EINVAL;
+		}
+
+#endif  /* CONFIG_GRPTLK */
 #endif /* CONFIG_BT_CTLR_ADV_ISO */
 
 	}

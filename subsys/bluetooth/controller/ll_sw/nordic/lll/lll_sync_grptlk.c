@@ -25,6 +25,7 @@
 #include "lll_chan.h"
 #include "lll_sync_iso.h"
 #include "lll_sync_grptlk.h"
+#include "lll_iso_tx.h"
 
 #include "lll_internal.h"
 #include "lll_tim_internal.h"
@@ -736,6 +737,27 @@ static void isr_rx(void *param)
 		/* Get reference to stream context */
 		stream_handle = lll->stream_handle[stream_curr];
 		sync_stream = ull_sync_grptlk_lll_stream_get(stream_handle);
+
+		/* GRPTLK Test to print the PDU */
+		// if (sync_stream->bis_index == 1) {
+		// 	memq_link_t *lnk;
+		// 	struct node_tx_iso *tx;
+
+		// 	lnk = memq_peek(sync_stream->memq_tx.head, sync_stream->memq_tx.tail,
+		// 			(void **)&tx);
+		// 	if (lnk && tx) {
+		// 		struct pdu_bis *p = (void *)tx->pdu;
+		// 		uint8_t payload3 = p->payload[3];
+		// 		uint8_t payload2 = p->payload[2];
+		// 		uint8_t payload1 = p->payload[1];
+		// 		uint8_t payload0 = p->payload[0];
+
+		// 		char hex_str[11];
+		// 		snprintf(hex_str, sizeof(hex_str), "0x%02x%02x%02x%02x", payload3,
+		// 			 payload2, payload1, payload0);
+		// 		printk("PDU: %s\n", hex_str);
+		// 	}
+		// }
 
 		/* Store the received PDU if selected stream and not already
 		 * received (say in previous event as pre-transmitted PDU.
