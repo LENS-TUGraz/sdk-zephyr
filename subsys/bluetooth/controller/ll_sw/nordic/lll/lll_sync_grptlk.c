@@ -583,9 +583,9 @@ static void isr_rx_estab(void *param)
 
 static void isr_tx(void *param)
 {
-    lll_isr_tx_status_reset();     /* clear the LL’s TX busy flags        */
-    radio_switch_complete_and_disable(); /* disables radio and clears shortcuts */
-    lll_isr_cleanup(param);        /* notify ULL that the event is done   */
+    lll_isr_tx_status_reset();          /* clear TX busy flags           */
+    radio_isr_set(isr_done, param);     /* go through the normal done path */
+    radio_disable();                    /* triggers END -> isr_done()    */
 }
 
 
@@ -1283,15 +1283,13 @@ isr_rx_next_subevent:
 		pdu_tx->cssn  = 0U;
 
 		/* 2) Packet config + bind TX buffer */
-		{
-			uint8_t pkt_flags = RADIO_PKT_CONF_FLAGS(
-				RADIO_PKT_CONF_PDU_TYPE_BIS,
-				lll->phy,
-				RADIO_PKT_CONF_CTE_DISABLED);
-			radio_pkt_configure(RADIO_PKT_CONF_LENGTH_8BIT, lll->max_pdu, pkt_flags);
-			radio_pkt_tx_set(pdu_tx);
-		}
-
+		uint8_t pkt_flags = RADIO_PKT_CONF_FLAGS(
+			RADIO_PKT_CONF_PDU_TYPE_BIS,
+			lll->phy,
+			RADIO_PKT_CONF_CTE_DISABLED);
+		radio_pkt_configure(RADIO_PKT_CONF_LENGTH_8BIT, lll->max_pdu, pkt_flags);
+		radio_pkt_tx_set(pdu_tx);
+		
 		/* 3) Use the channel already computed for this subevent */
 		lll_chan_set(data_chan_use);
 
@@ -1300,79 +1298,85 @@ isr_rx_next_subevent:
 		radio_tmr_tx_enable();
 
 		/* 5) Schedule the TX START instant (this is what makes isr_tx fire) */
+		uint32_t start_us;
+		uint32_t hcto;
+		uint8_t  nse;
+		struct lll_sync_iso_stream *stream =
+			ull_sync_grptlk_lll_stream_get(lll->stream_handle[0]);
+
+		/* Decide packing by the same condition your RX path uses */
+		if (IS_ENABLED(CONFIG_BT_CTLR_SYNC_ISO_SEQUENTIAL) &&
+			(lll->bis_spacing >= (lll->sub_interval * lll->nse))) {
+			/* Sequential NSE index */
+			nse = (((uint8_t)bis - stream->bis_index) *
+				((lll->bn * lll->irc) + lll->ptc)) +
+				((lll->irc_curr - 1U) * lll->bn) +
+				(lll->bn_curr - 1U) + lll->ptc_curr + lll->ctrl;
+			hcto = lll->sub_interval * nse;
+		} else if (IS_ENABLED(CONFIG_BT_CTLR_SYNC_ISO_INTERLEAVED) &&
+				!(lll->bis_spacing >= (lll->sub_interval * lll->nse))) {
+			/* Interleaved NSE index */
+			nse = (((uint8_t)bis - stream->bis_index)) +
+				((((lll->irc_curr - 1U) * lll->bn) +
+					(lll->bn_curr - 1U) + lll->ptc_curr) * lll->num_bis) +
+				lll->ctrl;
+			hcto = lll->bis_spacing * nse;
+		} else {
+			LL_ASSERT(false);
+			hcto = 0U;
+		}
+
+		/* === TX should start at the nominal subevent instant (no RX early/jitter) === */
 		{
+			uint32_t subevent_us;
 			uint32_t start_us;
-			uint32_t hcto;
-			uint8_t  nse;
 			struct lll_sync_iso_stream *stream =
 				ull_sync_grptlk_lll_stream_get(lll->stream_handle[0]);
-
-			/* Decide packing by the same condition your RX path uses */
-			if (IS_ENABLED(CONFIG_BT_CTLR_SYNC_ISO_SEQUENTIAL) &&
-				(lll->bis_spacing >= (lll->sub_interval * lll->nse))) {
-				/* Sequential NSE index */
+	
+			/* Compute NSE offset with the *selected* BIS (not lll->bis_curr) */
+			uint8_t nse;
+			bool is_seq = (lll->bis_spacing >= (lll->sub_interval * lll->nse));
+			if (IS_ENABLED(CONFIG_BT_CTLR_SYNC_ISO_SEQUENTIAL) && is_seq) {
 				nse = (((uint8_t)bis - stream->bis_index) *
 					((lll->bn * lll->irc) + lll->ptc)) +
 					((lll->irc_curr - 1U) * lll->bn) +
 					(lll->bn_curr - 1U) + lll->ptc_curr + lll->ctrl;
-				hcto = lll->sub_interval * nse;
-			} else if (IS_ENABLED(CONFIG_BT_CTLR_SYNC_ISO_INTERLEAVED) &&
-					!(lll->bis_spacing >= (lll->sub_interval * lll->nse))) {
-				/* Interleaved NSE index */
+				subevent_us = (uint32_t)lll->sub_interval * nse;
+			} else if (IS_ENABLED(CONFIG_BT_CTLR_SYNC_ISO_INTERLEAVED) && !is_seq) {
 				nse = (((uint8_t)bis - stream->bis_index)) +
 					((((lll->irc_curr - 1U) * lll->bn) +
 						(lll->bn_curr - 1U) + lll->ptc_curr) * lll->num_bis) +
 					lll->ctrl;
-				hcto = lll->bis_spacing * nse;
+				subevent_us = (uint32_t)lll->bis_spacing * nse;
 			} else {
 				LL_ASSERT(false);
-				hcto = 0U;
+				subevent_us = 0U;
 			}
+	
+			/* Align AA-on-air to the subevent boundary:
+			* READY anchor + subevent_us - TX ramp, then advance 23 µs
+			*/
+			start_us  = radio_tmr_ready_restore() + subevent_us;
+			start_us -= radio_tx_ready_delay_get(lll->phy, PHY_FLAGS_S8);
+			start_us += 11U;                        /* <-- fix the +23 µs lateness */
 
-			if (trx_cnt) {
-				/* Anchor-based adjust (copy from your RX code) */
-				uint32_t jitter_max_us, overhead_us, jitter_us;
+			(void)radio_tmr_start_us(1U, start_us);
 
-				hcto += radio_tmr_aa_restore();
-				hcto -= radio_rx_chain_delay_get(lll->phy, PHY_FLAGS_S8);
-				hcto -= addr_us_get(lll->phy);
-				hcto -= radio_rx_ready_delay_get(lll->phy, PHY_FLAGS_S8);
 
-				overhead_us  = radio_rx_chain_delay_get(lll->phy, PHY_FLAGS_S8);
-				overhead_us += addr_us_get(lll->phy);
-				overhead_us += radio_rx_ready_delay_get(lll->phy, PHY_FLAGS_S8);
-				overhead_us += (EVENT_CLOCK_JITTER_US << 1);
+			#if defined(HAL_RADIO_GPIO_HAVE_PA_PIN)
+				radio_gpio_pa_setup();
+				/* Enable PA at TX-ready instant: (start_us + TX-ready delay) minus PA offset */
+				radio_gpio_pa_lna_enable(start_us +
+										radio_tx_ready_delay_get(lll->phy, PHY_FLAGS_S8) -
+										HAL_RADIO_GPIO_PA_OFFSET);
+			#endif
 
-				jitter_max_us  = (EVENT_IFS_US - overhead_us) >> 1;
-				jitter_max_us -= RANGE_DELAY_US + HAL_RADIO_TMR_START_DELAY_US;
 
-				jitter_us = (EVENT_CLOCK_JITTER_US << 1) * nse;
-				if (jitter_us > jitter_max_us) {
-					jitter_us = jitter_max_us;
-				}
 
-				hcto -= jitter_us;
-				start_us = hcto;
-
-				/* IMPORTANT: pass 1U → TX start */
-				(void)radio_tmr_start_us(1U, start_us);
-
-				/* Optional accounting (mirrors RX math) */
-				hcto  = start_us + (jitter_us << 1)
-						+ RANGE_DELAY_US + HAL_RADIO_TMR_START_DELAY_US;
-			} else {
-				hcto += radio_tmr_ready_restore();
-				start_us = hcto;
-				/* IMPORTANT: pass 1U → TX start */
-				(void)radio_tmr_start_us(1U, start_us);
-
-				hcto += ((EVENT_JITTER_US + EVENT_TICKER_RES_MARGIN_US +
-						lll->window_widening_event_us) << 1) +
-						lll->window_size_event_us;
-			}
-
-			radio_tmr_end_capture(); /* optional but fine */
+			radio_tmr_end_capture();   /* keep if you want timing capture */
 		}
+
+		radio_tmr_end_capture(); /* optional but fine */
 
 		/* 6) Make END go to TX ISR */
 		radio_isr_set(isr_tx, lll);
