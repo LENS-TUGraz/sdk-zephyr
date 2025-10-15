@@ -583,9 +583,78 @@ static void isr_rx_estab(void *param)
 
 static void isr_tx(void *param)
 {
-    lll_isr_tx_status_reset();
-    radio_isr_set(isr_done, param);
-    radio_disable();
+	struct lll_sync_iso *lll = param;
+
+	lll_isr_tx_status_reset();
+
+	uint8_t bis;
+
+	if (lll->bn_curr < lll->bn) {
+		lll->bn_curr++;
+		bis = lll->bis_curr;
+	} else if (lll->irc_curr < lll->irc) {
+		lll->irc_curr++;
+		lll->bn_curr = 1U;
+		bis = lll->bis_curr;
+	} else if (lll->ptc_curr < lll->ptc) {
+		lll->ptc_curr++;
+		bis = lll->bis_curr;
+	} else {
+		/* Move to next BIS when this one is exhausted */
+		if (lll->bis_curr < lll->num_bis) {
+			lll->bis_curr++;
+			lll->bn_curr = 1U;
+			lll->irc_curr = 1U;
+			lll->ptc_curr = 0U;
+			bis = lll->bis_curr;
+		} else {
+			/* BIG done */
+			radio_isr_set(isr_done, lll);
+			radio_disable();
+			return;
+		}
+	}
+
+	{
+		uint8_t data_chan_use = lll->next_chan_use;
+		lll_chan_set(data_chan_use);
+	}
+
+	struct pdu_bis *p = (void *)radio_pkt_empty_get();
+	p->ll_id = PDU_BIS_LLID_COMPLETE_END;
+	p->len = 0U;
+	p->cstf = 0U;
+	p->cssn = 0U;
+
+	uint8_t pf = RADIO_PKT_CONF_FLAGS(RADIO_PKT_CONF_PDU_TYPE_BIS, lll->phy,
+					  RADIO_PKT_CONF_CTE_DISABLED);
+	radio_pkt_configure(RADIO_PKT_CONF_LENGTH_8BIT, lll->max_pdu, pf);
+	radio_pkt_tx_set(p);
+
+	uint8_t aa[4], crc[3];
+	util_bis_aa_le32(bis, lll->seed_access_addr, aa);
+	crc[0] = bis;
+	memcpy(&crc[1], lll->base_crc_init, sizeof(uint16_t));
+	radio_aa_set(aa);
+	radio_crc_configure(PDU_CRC_POLYNOMIAL, sys_get_le24(crc));
+
+	uint32_t start_us = radio_tmr_ready_restore() + lll->sub_interval;
+
+	(void)radio_tmr_start_us(1U, start_us);
+
+#if defined(HAL_RADIO_GPIO_HAVE_PA_PIN)
+	radio_gpio_pa_setup();
+	radio_gpio_pa_lna_enable(start_us + radio_tx_ready_delay_get(lll->phy, PHY_FLAGS_S8) -
+				 HAL_RADIO_GPIO_PA_OFFSET);
+#endif
+
+	const uint16_t evt_ctr = (lll->payload_count / lll->bn) - 1U;
+	const uint16_t chan_id = lll_chan_id(aa);
+	next_chan_calc_seq(lll, evt_ctr, chan_id);
+
+	radio_tmr_end_capture();
+
+	radio_isr_set(isr_tx, lll);
 }
 
 static void isr_rx(void *param)
@@ -1315,6 +1384,17 @@ isr_rx_next_subevent:
 					 radio_tx_ready_delay_get(lll->phy, PHY_FLAGS_S8) -
 					 HAL_RADIO_GPIO_PA_OFFSET);
 #endif
+
+		/* Make scheduler state match what we just TX’d on */
+		lll->bis_curr = bis;
+
+		/* Prime the next hop so isr_tx() has a valid immediate channel */
+		{
+			uint8_t aa[4];
+			util_bis_aa_le32(bis, lll->seed_access_addr, aa);
+			const uint16_t evt_ctr = (lll->payload_count / lll->bn) - 1U;
+			next_chan_calc_seq(lll, evt_ctr, lll_chan_id(aa));
+		}
 
 		radio_tmr_end_capture();
 		radio_isr_set(isr_tx, lll);
