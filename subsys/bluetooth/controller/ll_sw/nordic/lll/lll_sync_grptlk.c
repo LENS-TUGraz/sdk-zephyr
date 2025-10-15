@@ -583,11 +583,10 @@ static void isr_rx_estab(void *param)
 
 static void isr_tx(void *param)
 {
-    lll_isr_tx_status_reset();          /* clear TX busy flags           */
-    radio_isr_set(isr_done, param);     /* go through the normal done path */
-    radio_disable();                    /* triggers END -> isr_done()    */
+    lll_isr_tx_status_reset();
+    radio_isr_set(isr_done, param);
+    radio_disable();
 }
-
 
 static void isr_rx(void *param)
 {
@@ -1272,126 +1271,55 @@ isr_rx_next_subevent:
 
 	lll_chan_set(data_chan_use);
 
-
-	/* === GRPTLK: on BIS != 0 and != 1, transmit empty PDU instead of receiving === */
+	/* GRPTLK: Setup BISes 2-n for TX */
 	if ((bis != 0U) && (bis != 1U)) {
-		/* 1) Build an empty BIS Data PDU */
 		struct pdu_bis *pdu_tx = (void *)radio_pkt_empty_get();
-		pdu_tx->ll_id = PDU_BIS_LLID_FRAMED; /* or _UNFRAMED to match your BIG */
-		pdu_tx->len   = 0U;
-		pdu_tx->cstf  = 0U;
-		pdu_tx->cssn  = 0U;
+		pdu_tx->ll_id = PDU_BIS_LLID_COMPLETE_END; // We don't support PDU fragments
+		pdu_tx->len = 0U;
+		pdu_tx->cstf = 0U; // We don't support Control PDUs
+		pdu_tx->cssn = 0U;
 
-		/* 2) Packet config + bind TX buffer */
-		uint8_t pkt_flags = RADIO_PKT_CONF_FLAGS(
-			RADIO_PKT_CONF_PDU_TYPE_BIS,
-			lll->phy,
-			RADIO_PKT_CONF_CTE_DISABLED);
+		uint8_t pkt_flags = RADIO_PKT_CONF_FLAGS(RADIO_PKT_CONF_PDU_TYPE_BIS, lll->phy,
+							 RADIO_PKT_CONF_CTE_DISABLED);
 		radio_pkt_configure(RADIO_PKT_CONF_LENGTH_8BIT, lll->max_pdu, pkt_flags);
 		radio_pkt_tx_set(pdu_tx);
-		
-		/* 3) Use the channel already computed for this subevent */
+
 		lll_chan_set(data_chan_use);
 
-		/* 4) Arm TX (not RX) */
 		radio_tmr_rx_disable();
 		radio_tmr_tx_enable();
 
-		/* 5) Schedule the TX START instant (this is what makes isr_tx fire) */
-		uint32_t start_us;
-		uint32_t hcto;
-		uint8_t  nse;
-		struct lll_sync_iso_stream *stream =
-			ull_sync_grptlk_lll_stream_get(lll->stream_handle[0]);
+		stream = ull_sync_grptlk_lll_stream_get(lll->stream_handle[0]);
 
-		/* Decide packing by the same condition your RX path uses */
 		if (IS_ENABLED(CONFIG_BT_CTLR_SYNC_ISO_SEQUENTIAL) &&
-			(lll->bis_spacing >= (lll->sub_interval * lll->nse))) {
-			/* Sequential NSE index */
+		    (lll->bis_spacing >= (lll->sub_interval * lll->nse))) {
 			nse = (((uint8_t)bis - stream->bis_index) *
-				((lll->bn * lll->irc) + lll->ptc)) +
-				((lll->irc_curr - 1U) * lll->bn) +
-				(lll->bn_curr - 1U) + lll->ptc_curr + lll->ctrl;
+			       ((lll->bn * lll->irc) + lll->ptc)) +
+			      ((lll->irc_curr - 1U) * lll->bn) + (lll->bn_curr - 1U) +
+			      lll->ptc_curr + lll->ctrl;
 			hcto = lll->sub_interval * nse;
-		} else if (IS_ENABLED(CONFIG_BT_CTLR_SYNC_ISO_INTERLEAVED) &&
-				!(lll->bis_spacing >= (lll->sub_interval * lll->nse))) {
-			/* Interleaved NSE index */
-			nse = (((uint8_t)bis - stream->bis_index)) +
-				((((lll->irc_curr - 1U) * lll->bn) +
-					(lll->bn_curr - 1U) + lll->ptc_curr) * lll->num_bis) +
-				lll->ctrl;
-			hcto = lll->bis_spacing * nse;
 		} else {
 			LL_ASSERT(false);
 			hcto = 0U;
 		}
 
-		/* === TX should start at the nominal subevent instant (no RX early/jitter) === */
-		{
-			uint32_t subevent_us;
-			uint32_t start_us;
-			struct lll_sync_iso_stream *stream =
-				ull_sync_grptlk_lll_stream_get(lll->stream_handle[0]);
-	
-			/* Compute NSE offset with the *selected* BIS (not lll->bis_curr) */
-			uint8_t nse;
-			bool is_seq = (lll->bis_spacing >= (lll->sub_interval * lll->nse));
-			if (IS_ENABLED(CONFIG_BT_CTLR_SYNC_ISO_SEQUENTIAL) && is_seq) {
-				nse = (((uint8_t)bis - stream->bis_index) *
-					((lll->bn * lll->irc) + lll->ptc)) +
-					((lll->irc_curr - 1U) * lll->bn) +
-					(lll->bn_curr - 1U) + lll->ptc_curr + lll->ctrl;
-				subevent_us = (uint32_t)lll->sub_interval * nse;
-			} else if (IS_ENABLED(CONFIG_BT_CTLR_SYNC_ISO_INTERLEAVED) && !is_seq) {
-				nse = (((uint8_t)bis - stream->bis_index)) +
-					((((lll->irc_curr - 1U) * lll->bn) +
-						(lll->bn_curr - 1U) + lll->ptc_curr) * lll->num_bis) +
-					lll->ctrl;
-				subevent_us = (uint32_t)lll->bis_spacing * nse;
-			} else {
-				LL_ASSERT(false);
-				subevent_us = 0U;
-			}
-	
-			/* Align AA-on-air to the subevent boundary:
-			* READY anchor + subevent_us - TX ramp, then advance 23 µs
-			*/
-			start_us  = radio_tmr_ready_restore() + subevent_us;
-			start_us -= radio_tx_ready_delay_get(lll->phy, PHY_FLAGS_S8);
-			start_us += 11U;                        /* <-- fix the +23 µs lateness */
+		start_us = radio_tmr_ready_restore() + hcto;
+		start_us -= radio_tx_ready_delay_get(lll->phy, PHY_FLAGS_S8);
+		start_us += 11U;
 
-			(void)radio_tmr_start_us(1U, start_us);
+		(void)radio_tmr_start_us(1U, start_us);
 
+#if defined(HAL_RADIO_GPIO_HAVE_PA_PIN)
+		radio_gpio_pa_setup();
+		radio_gpio_pa_lna_enable(start_us +
+					 radio_tx_ready_delay_get(lll->phy, PHY_FLAGS_S8) -
+					 HAL_RADIO_GPIO_PA_OFFSET);
+#endif
 
-			#if defined(HAL_RADIO_GPIO_HAVE_PA_PIN)
-				radio_gpio_pa_setup();
-				/* Enable PA at TX-ready instant: (start_us + TX-ready delay) minus PA offset */
-				radio_gpio_pa_lna_enable(start_us +
-										radio_tx_ready_delay_get(lll->phy, PHY_FLAGS_S8) -
-										HAL_RADIO_GPIO_PA_OFFSET);
-			#endif
-
-
-
-			radio_tmr_end_capture();   /* keep if you want timing capture */
-		}
-
-		radio_tmr_end_capture(); /* optional but fine */
-
-		/* 6) Make END go to TX ISR */
+		radio_tmr_end_capture();
 		radio_isr_set(isr_tx, lll);
-
-		/* 7) Do NOT arm RX afterwards */
 		return;
 	}
-	/* === end GRPTLK === */
-
-
-
-
-
-
-
 
 	/* Encryption */
 	if (IS_ENABLED(CONFIG_BT_CTLR_BROADCAST_ISO_ENC) &&
