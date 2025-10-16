@@ -6318,6 +6318,8 @@ int hci_iso_handle(struct net_buf *buf, struct net_buf **evt)
 			return -EINVAL;
 		}
 
+		return 0;
+
 #endif  /* CONFIG_GRPTLK */
 #endif /* CONFIG_BT_CTLR_ADV_ISO */
 

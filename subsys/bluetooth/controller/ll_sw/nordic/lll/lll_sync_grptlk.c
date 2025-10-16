@@ -185,6 +185,8 @@ static int prepare_cb(struct lll_prepare_param *p)
 	return 0;
 }
 
+uint8_t payload[155] = {0}; // TODO: Check how big it must be
+
 static int prepare_cb_common(struct lll_prepare_param *p)
 {
 	struct lll_sync_iso_stream *stream;
@@ -304,6 +306,23 @@ static int prepare_cb_common(struct lll_prepare_param *p)
 
 		} else {
 			LL_ASSERT(false);
+		}
+	}
+
+	uint16_t handle;
+	memq_link_t *link;
+	struct node_tx_iso *tx;
+
+	for (uint8_t i = 1; i <= lll->num_bis; i++) {
+		stream_handle = lll->stream_handle[i]; // 0
+		handle = LL_BIS_SYNC_HANDLE_FROM_IDX(stream_handle); // 31
+		stream = ull_sync_grptlk_lll_stream_get(stream_handle); //9344
+		link = memq_peek(stream->memq_tx.head, stream->memq_tx.tail, (void **)&tx);
+		if (link) {
+			memcpy(payload, &tx->pdu[3], lll->max_pdu);
+			memq_dequeue(stream->memq_tx.tail, &stream->memq_tx.head, NULL);
+			tx->next = link;
+			ull_iso_lll_ack_enqueue(handle, tx);
 		}
 	}
 
@@ -1344,9 +1363,11 @@ isr_rx_next_subevent:
 	if ((bis != 0U) && (bis != 1U)) {
 		struct pdu_bis *pdu_tx = (void *)radio_pkt_empty_get();
 		pdu_tx->ll_id = PDU_BIS_LLID_COMPLETE_END; // We don't support PDU fragments
-		pdu_tx->len = 0U;
+		pdu_tx->len = lll->max_pdu;
 		pdu_tx->cstf = 0U; // We don't support Control PDUs
 		pdu_tx->cssn = 0U;
+
+		memcpy(pdu_tx->payload, payload, lll->max_pdu);
 
 		uint8_t pkt_flags = RADIO_PKT_CONF_FLAGS(RADIO_PKT_CONF_PDU_TYPE_BIS, lll->phy,
 							 RADIO_PKT_CONF_CTE_DISABLED);
