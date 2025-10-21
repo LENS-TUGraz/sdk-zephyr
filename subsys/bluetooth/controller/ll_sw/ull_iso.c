@@ -1587,18 +1587,7 @@ void ull_iso_lll_ack_enqueue(uint16_t handle, struct node_tx_iso *node_tx)
 		ll_rx_sched();
 #ifdef CONFIG_GRPTLK
 	} else if (IS_ENABLED(CONFIG_BT_CTLR_ADV_ISO) && IS_SYNC_ISO_HANDLE(handle)) {
-		// struct lll_sync_iso_stream *stream;
-		// struct ll_iso_datapath *dp;
-
-		// stream = ull_sync_grptlk_lll_stream_get(handle - CONFIG_BT_CTLR_ADV_ISO_STREAM_COUNT);
-		// dp = stream->dp;
-
-		// if (dp) {
-		// 	isoal_tx_pdu_release(dp->source_hdl, node_tx);
-		// } else {
-		// 	LL_ASSERT(0);
-		// }
-		ll_tx_ack_put(handle - 31, (void *)node_tx);
+		ll_tx_ack_put(handle - CONFIG_BT_CTLR_ADV_ISO_STREAM_COUNT, (void *)node_tx);
 		ll_rx_sched();
 #endif /* CONFIG_GRPTLK */
 	} else {
