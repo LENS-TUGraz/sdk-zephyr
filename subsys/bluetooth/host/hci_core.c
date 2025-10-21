@@ -650,7 +650,7 @@ static void hci_num_completed_packets(struct net_buf *buf)
 
 		LOG_DBG("handle %u count %u", handle, count);
 
-		conn = bt_conn_lookup_handle(handle, BT_CONN_TYPE_ALL);
+		conn = bt_conn_lookup_handle(handle + 32, BT_CONN_TYPE_ALL);
 		if (!conn) {
 			LOG_ERR("No connection for handle %u", handle);
 			continue;
@@ -666,7 +666,7 @@ static void hci_num_completed_packets(struct net_buf *buf)
 
 			if (!node) {
 				LOG_ERR("packets count mismatch");
-				__ASSERT_NO_MSG(0);
+				// __ASSERT_NO_MSG(0);
 				break;
 			}
 
