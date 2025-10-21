@@ -27,6 +27,11 @@ struct lll_sync_iso_data_chan_interleaved {
 	uint16_t id;
 };
 
+struct lll_grptlk_tx_payload {
+	bool valid;
+	uint8_t data[CONFIG_BT_ISO_TX_MTU];
+};
+
 struct lll_sync_iso {
 	struct lll_hdr hdr;
 
@@ -104,6 +109,8 @@ struct lll_sync_iso {
 	uint32_t window_widening_prepare_us;
 	uint32_t window_widening_event_us;
 	uint32_t window_size_event_us;
+	
+	struct lll_grptlk_tx_payload bis_payload[CONFIG_BT_ISO_MAX_CHAN - 1];
 };
 
 int lll_sync_iso_init(void);
