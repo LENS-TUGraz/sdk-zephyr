@@ -618,9 +618,9 @@ static void isr_tx(void *param)
 
 	uint8_t bis;
 	uint8_t bis_idx;
-	uint8_t data_chan_use
+	uint8_t data_chan_use;
 
-		if (lll->bn_curr < lll->bn)
+	if (lll->bn_curr < lll->bn)
 	{
 		lll->bn_curr++;
 		bis = lll->bis_curr;
