@@ -323,12 +323,10 @@ static int prepare_cb_common(struct lll_prepare_param *p)
 		while ((deq_link = memq_dequeue(stream->memq_tx.tail, &stream->memq_tx.head,
 						(void **)&tx)) != 0) {
 
-			size_t len = lll->max_pdu;
-			if (len > CONFIG_BT_ISO_TX_MTU) {
-				len = CONFIG_BT_ISO_TX_MTU;
-			}
+			struct pdu_bis *pdu;
+			pdu = (void *)tx->pdu;
 
-			memcpy(lll->bis_payload[i].data, &tx->pdu[3], len);
+			memcpy(lll->bis_payload[i].data, pdu->payload, pdu->len);
 			lll->bis_payload[i].valid = true;
 
 			tx->next = deq_link;

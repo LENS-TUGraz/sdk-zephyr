@@ -1935,7 +1935,12 @@ static isoal_status_t ll_iso_pdu_alloc(struct isoal_pdu_buffer *pdu_buffer)
 	 * the ISOAL based on the minimum of the buffer size and the respective
 	 * Max_PDU_C_To_P or Max_PDU_P_To_C.
 	 */
+#ifdef CONFIG_GRPTLK
+	/* HACK: guarantee 40-byte LC3 frame on BIS - do not fragment */
+	pdu_buffer->size = MAX(MAX(LL_BIS_OCTETS_TX_MAX, LL_CIS_OCTETS_TX_MAX), CONFIG_BT_ISO_TX_MTU);
+#else
 	pdu_buffer->size = MAX(LL_BIS_OCTETS_TX_MAX, LL_CIS_OCTETS_TX_MAX);
+#endif /* CONFIG_GRPTLK */
 
 	return ISOAL_STATUS_OK;
 }
