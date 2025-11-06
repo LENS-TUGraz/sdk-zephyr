@@ -696,7 +696,10 @@ static void isr_tx(void *param)
 	radio_aa_set(aa);
 	radio_crc_configure(PDU_CRC_POLYNOMIAL, sys_get_le24(crc));
 
-	uint32_t start_us = radio_tmr_ready_restore() + lll->sub_interval;
+	/* Calculate timing accounting for PDU transmission time */
+	uint32_t interval_us = lll->sub_interval;
+	interval_us -= PDU_BIS_US(p->len, ((p->len) ? lll->enc : 0U), lll->phy, lll->phy_flags);
+	uint32_t start_us = radio_tmr_ready_restore() + interval_us;
 
 	(void)radio_tmr_start_us(1U, start_us);
 
