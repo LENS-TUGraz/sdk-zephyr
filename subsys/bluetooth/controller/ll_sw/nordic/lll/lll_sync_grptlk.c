@@ -627,6 +627,7 @@ static void isr_tx(void *param)
 	uint8_t bis;
 	uint8_t bis_idx;
 	uint8_t data_chan_use;
+	bool bis_transition = false;
 
 	if (lll->bn_curr < lll->bn)
 	{
@@ -653,6 +654,7 @@ static void isr_tx(void *param)
 			lll->irc_curr = 1U;
 			lll->ptc_curr = 0U;
 			bis = lll->bis_curr;
+			bis_transition = true;
 
 			/* Set TX power for this BIS based on payload availability */
 			bis_idx = lll->bis_curr - 1U;
@@ -696,14 +698,23 @@ static void isr_tx(void *param)
 	radio_aa_set(aa);
 	radio_crc_configure(PDU_CRC_POLYNOMIAL, sys_get_le24(crc));
 
-	/* Calculate inter-frame spacing: time from end of current packet to start of next */
+	/* Calculate inter-frame spacing: time from end of current packet to start of next
+	 * In sequential packing, all subevents (including between BISes) use sub_interval
+	 */
 	uint32_t ifs_us = lll->sub_interval;
 	ifs_us -= PDU_BIS_US(p->len, ((p->len) ? lll->enc : 0U), lll->phy, lll->phy_flags);
 
-	/* Schedule next TX based on when current TX ends, not event start */
+	/* Schedule next TX based on when current TX ends */
 	uint32_t end_us = radio_tmr_end_get();
 	uint32_t start_us = end_us + ifs_us;
 	start_us -= radio_tx_ready_delay_get(lll->phy, PHY_FLAGS_S8);
+
+	/* When transitioning between BISes, add timing correction for radio reconfiguration
+	 * Empirically determined offset to account for AA/CRC reconfiguration overhead
+	 */
+	if (bis_transition) {
+		start_us += 23;
+	}
 
 	(void)radio_tmr_start_us(1U, start_us);
 
