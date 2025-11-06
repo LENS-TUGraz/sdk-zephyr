@@ -696,10 +696,14 @@ static void isr_tx(void *param)
 	radio_aa_set(aa);
 	radio_crc_configure(PDU_CRC_POLYNOMIAL, sys_get_le24(crc));
 
-	/* Calculate timing accounting for PDU transmission time */
-	uint32_t interval_us = lll->sub_interval;
-	interval_us -= PDU_BIS_US(p->len, ((p->len) ? lll->enc : 0U), lll->phy, lll->phy_flags);
-	uint32_t start_us = radio_tmr_ready_restore() + interval_us;
+	/* Calculate inter-frame spacing: time from end of current packet to start of next */
+	uint32_t ifs_us = lll->sub_interval;
+	ifs_us -= PDU_BIS_US(p->len, ((p->len) ? lll->enc : 0U), lll->phy, lll->phy_flags);
+
+	/* Schedule next TX based on when current TX ends, not event start */
+	uint32_t end_us = radio_tmr_end_get();
+	uint32_t start_us = end_us + ifs_us;
+	start_us -= radio_tx_ready_delay_get(lll->phy, PHY_FLAGS_S8);
 
 	(void)radio_tmr_start_us(1U, start_us);
 
@@ -1428,19 +1432,31 @@ isr_rx_next_subevent:
 
 		if (IS_ENABLED(CONFIG_BT_CTLR_SYNC_ISO_SEQUENTIAL) &&
 		    (lll->bis_spacing >= (lll->sub_interval * lll->nse))) {
-			nse = (((uint8_t)bis - stream->bis_index) *
-			       ((lll->bn * lll->irc) + lll->ptc)) +
-			      ((lll->irc_curr - 1U) * lll->bn) + (lll->bn_curr - 1U) +
+			/* In sequential packing, BIS spacing defines the offset between BISes */
+			hcto = lll->bis_spacing * ((uint8_t)bis - stream->bis_index);
+
+			/* Add the subevent offset within this BIS */
+			nse = ((lll->irc_curr - 1U) * lll->bn) + (lll->bn_curr - 1U) +
 			      lll->ptc_curr + lll->ctrl;
-			hcto = lll->sub_interval * nse;
+			hcto += lll->sub_interval * nse;
 		} else {
 			LL_ASSERT(false);
 			hcto = 0U;
 		}
 
-		start_us = radio_tmr_ready_restore() + hcto;
+		/* Calculate TX start time from AA capture timestamp
+		 * hcto is offset from anchor point (packet start), but AA timestamp
+		 * is at AA end. Need to account for:
+		 * - addr_us_get: to go from AA end back to packet start
+		 * - rx_chain_delay: AA was captured with RX chain delay
+		 * - tx_ready_delay: radio warmup time for TX
+		 * - tx_chain_delay: TX path delay to antenna
+		 */
+		start_us = radio_tmr_aa_restore() + hcto;
+		start_us -= addr_us_get(lll->phy);
+		start_us -= radio_rx_chain_delay_get(lll->phy, PHY_FLAGS_S8);
 		start_us -= radio_tx_ready_delay_get(lll->phy, PHY_FLAGS_S8);
-		start_us += 11U;
+		start_us -= radio_tx_chain_delay_get(lll->phy, PHY_FLAGS_S8);
 
 		(void)radio_tmr_start_us(1U, start_us);
 
