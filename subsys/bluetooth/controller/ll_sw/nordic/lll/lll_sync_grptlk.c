@@ -354,6 +354,13 @@ static int prepare_cb_common(struct lll_prepare_param *p)
 	radio_crc_configure(PDU_CRC_POLYNOMIAL, sys_get_le24(crc_init));
 	lll_chan_set(data_chan_use);
 
+	/* Set initial TX power for first BIS based on payload availability */
+	if (lll->bis_payload[0].valid) {
+		radio_tx_power_set(RADIO_TXP_DEFAULT);
+	} else {
+		radio_tx_power_set(-40);
+	}
+
 	/* By design, there shall always be one free node rx available for
 	 * setting up radio for new PDU reception.
 	 */
@@ -646,6 +653,14 @@ static void isr_tx(void *param)
 			lll->irc_curr = 1U;
 			lll->ptc_curr = 0U;
 			bis = lll->bis_curr;
+
+			/* Set TX power for this BIS based on payload availability */
+			bis_idx = lll->bis_curr - 1U;
+			if (lll->bis_payload[bis_idx - 1].valid) {
+				radio_tx_power_set(RADIO_TXP_DEFAULT);
+			} else {
+				radio_tx_power_set(-40);
+			}
 		} else {
 			/* BIG done */
 			radio_isr_set(isr_done, lll);
