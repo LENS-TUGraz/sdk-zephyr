@@ -318,7 +318,10 @@ static int prepare_cb_common(struct lll_prepare_param *p)
 		stream = ull_sync_grptlk_lll_stream_get(stream_handle);
 		LL_ASSERT(stream);
 
-		lll->bis_payload[i].valid = false;
+		uint8_t bis_index = stream->bis_index;  // Get actual BIS number (1-3)
+      	uint8_t payload_idx = bis_index - 1;     // Convert to 0-indexed
+
+		lll->bis_payload[payload_idx].valid = false;
 
 		while ((deq_link = memq_dequeue(stream->memq_tx.tail, &stream->memq_tx.head,
 						(void **)&tx)) != 0) {
@@ -326,8 +329,8 @@ static int prepare_cb_common(struct lll_prepare_param *p)
 			struct pdu_bis *pdu;
 			pdu = (void *)tx->pdu;
 
-			memcpy(lll->bis_payload[i].data, pdu->payload, pdu->len);
-			lll->bis_payload[i].valid = true;
+			memcpy(lll->bis_payload[payload_idx].data, pdu->payload, pdu->len);
+			lll->bis_payload[payload_idx].valid = true;
 
 			tx->next = deq_link;
 			ull_iso_lll_ack_enqueue(handle, tx);

@@ -499,6 +499,40 @@ uint8_t ll_setup_iso_path(uint16_t handle, uint8_t path_dir, uint8_t path_id,
 #ifdef CONFIG_GRPTLK
 	} else if (path_dir == BT_HCI_DATAPATH_DIR_HOST_TO_CTLR) {
 		role = ISOAL_ROLE_BROADCAST_SOURCE;
+
+		/* For grptlk receivers transmitting back */
+		if (IS_SYNC_ISO_HANDLE(handle)) {
+			struct ll_sync_iso_set *sync_iso;
+			struct lll_sync_iso *lll_iso;
+			uint16_t stream_handle;
+
+			stream_handle = LL_BIS_SYNC_IDX_FROM_HANDLE(handle);
+			sync_stream = ull_sync_grptlk_stream_get(stream_handle);
+
+			if (!sync_stream || sync_stream->dp) {
+				return BT_HCI_ERR_CMD_DISALLOWED;
+			}
+
+			sync_iso = ull_sync_grptlk_by_stream_get(stream_handle);
+			lll_iso = &sync_iso->lll;
+
+			/* Get ISO parameters from sync context */
+			iso_interval = lll_iso->iso_interval;
+			sdu_interval = lll_iso->sdu_interval;
+			burst_number = lll_iso->bn;
+			max_octets = lll_iso->max_pdu;
+			framed = lll_iso->framing;
+			flush_timeout = 0U;
+
+			group_sync_delay = ull_iso_big_sync_delay(lll_iso->num_bis,
+								   lll_iso->bis_spacing,
+								   lll_iso->nse,
+								   lll_iso->sub_interval,
+								   lll_iso->phy,
+								   lll_iso->max_pdu,
+								   lll_iso->enc);
+			stream_sync_delay = group_sync_delay - stream_handle * lll_iso->bis_spacing;
+		}
 #else
 	} else if ((path_dir == BT_HCI_DATAPATH_DIR_HOST_TO_CTLR) && (cis || adv_stream)) {
 #endif
@@ -549,6 +583,9 @@ uint8_t ll_setup_iso_path(uint16_t handle, uint8_t path_dir, uint8_t path_id,
 			}
 
 			// TODO: do we need to set the dp here?
+			if (IS_ENABLED(CONFIG_BT_CTLR_SYNC_ISO) && sync_stream != NULL) {
+				sync_stream->dp = dp;
+			}
 
 			dp->source_hdl = source_handle;
 			isoal_source_enable(source_handle);

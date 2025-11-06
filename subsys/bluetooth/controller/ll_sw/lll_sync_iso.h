@@ -110,7 +110,7 @@ struct lll_sync_iso {
 	uint32_t window_widening_event_us;
 	uint32_t window_size_event_us;
 	
-	struct lll_grptlk_tx_payload bis_payload[CONFIG_BT_ISO_MAX_CHAN - 1];
+	struct lll_grptlk_tx_payload bis_payload[CONFIG_BT_ISO_MAX_CHAN];
 };
 
 int lll_sync_iso_init(void);

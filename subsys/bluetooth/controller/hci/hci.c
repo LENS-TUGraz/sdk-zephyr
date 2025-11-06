@@ -6285,7 +6285,7 @@ int hci_iso_handle(struct net_buf *buf, struct net_buf **evt)
 		uint16_t stream_handle;
 
 		/* Get BIS stream handle (-1 since we only have n-1 RX streams) */
-		stream_handle = handle - LL_BIS_SYNC_HANDLE_BASE - 1U;
+		stream_handle = handle - LL_BIS_SYNC_HANDLE_BASE;
 
 		sync_stream = ull_sync_grptlk_stream_get(stream_handle);
 		if (!sync_stream || !sync_stream->dp) {
