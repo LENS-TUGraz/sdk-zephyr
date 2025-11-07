@@ -32,10 +32,29 @@
 #include "lll_internal.h"
 #include "lll_adv_iso_internal.h"
 #include "lll_prof_internal.h"
+#include "lll_tim_internal.h"
 
 #include "ll_feat.h"
 
 #include "hal/debug.h"
+
+/* LED2 debugging for packet reception indication */
+#define LED2_PIN 7   /* P2.07 - Green LED 2 */
+
+static inline void led2_on(void) {
+    NRF_P2_S->OUTSET = (1 << LED2_PIN);  /* LED2 ON */
+}
+
+static inline void led2_off(void) {
+    NRF_P2_S->OUTCLR = (1 << LED2_PIN);  /* LED2 OFF */
+}
+
+static inline void led2_init(void) {
+    /* Configure LED2 pin as output */
+    NRF_P2_S->DIRSET = (1 << LED2_PIN);
+    /* Start with LED2 OFF */
+    NRF_P2_S->OUTCLR = (1 << LED2_PIN);
+}
 
 // #define TEST_WITH_DUMMY_PDU 0
 
@@ -48,7 +67,9 @@ static int prepare_cb(struct lll_prepare_param *p);
 static int prepare_cb_common(struct lll_prepare_param *p);
 static void isr_tx_create(void *param);
 static void isr_tx_normal(void *param);
-static void isr_tx_common(void *param, radio_isr_cb_t isr_tx, radio_isr_cb_t isr_done);
+static void isr_tx_common(void *param, radio_isr_cb_t isr_tx, radio_isr_cb_t isr_done, bool is_create);
+static void isr_rx_grptlk(void *param);
+static void setup_rx_mode(struct lll_adv_iso *lll, uint8_t bis);
 // #if defined(CONFIG_BT_CTLR_ADV_ISO_SEQUENTIAL)
 static void next_chan_calc_seq(struct lll_adv_iso *lll, uint16_t event_counter,
 			       uint16_t data_chan_id);
@@ -119,6 +140,9 @@ static void prepare(void *param)
 
 	/* Save the (latency + 1) for use in event */
 	lll->latency_prepare += elapsed;
+
+	/* Initialize LED2 for packet reception debugging */
+	led2_init();
 }
 
 static void create_prepare_bh(void *param)
@@ -452,15 +476,15 @@ static int prepare_cb_common(struct lll_prepare_param *p)
 
 static void isr_tx_create(void *param)
 {
-	isr_tx_common(param, isr_tx_create, isr_done_create);
+	isr_tx_common(param, isr_tx_create, isr_done_create, true);
 }
 
 static void isr_tx_normal(void *param)
 {
-	isr_tx_common(param, isr_tx_normal, lll_isr_done);
+	isr_tx_common(param, isr_tx_normal, lll_isr_done, false);
 }
 
-static void isr_tx_common(void *param, radio_isr_cb_t isr_tx, radio_isr_cb_t isr_done)
+static void isr_tx_common(void *param, radio_isr_cb_t isr_tx, radio_isr_cb_t isr_done, bool is_create)
 {
 	struct pdu_bis *pdu = NULL;
 	uint8_t data_chan_use = 0;
@@ -511,18 +535,20 @@ static void isr_tx_common(void *param, radio_isr_cb_t isr_tx, radio_isr_cb_t isr
 			bis = lll->bis_curr;
 
 		} else if (lll->bis_curr < lll->num_bis) {
-			/* Suppress all BIS > 1 TX packets */
-			if (lll->bis_curr == 1U) {
-				/* signal no more subevents */
-				is_ctrl = 1U;
-			} else {
-				lll->bis_curr++;
-				lll->ptc_curr = 0U;
-				lll->irc_curr = 1U;
-				/* transmit the (bn_curr)th PDU of bis_curr */
-				lll->bn_curr = 1U;
+			/* Move to next BIS */
+			lll->bis_curr++;
 
+			/* TX on BIS 1, RX on BIS > 1 */
+			if (lll->bis_curr == 1U) {
+				/* Continue TX on BIS 1 */
 				bis = lll->bis_curr;
+			} else if (!is_create) {
+				/* Setup RX mode for BIS > 1 (only after BIG is created) */
+				setup_rx_mode(lll, lll->bis_curr);
+				return; /* Exit TX flow, switch to RX */
+			} else {
+				/* During BIG creation, skip BISes > 1 */
+				is_ctrl = 1U;
 			}
 		} else {
 			is_ctrl = 1U;
@@ -535,7 +561,18 @@ static void isr_tx_common(void *param, radio_isr_cb_t isr_tx, radio_isr_cb_t isr
 		if (lll->bis_curr < lll->num_bis) {
 			lll->bis_curr++;
 
-			bis = lll->bis_curr;
+			/* TX on BIS 1, RX on BIS > 1 */
+			if (lll->bis_curr == 1U) {
+				/* Continue TX on BIS 1 */
+				bis = lll->bis_curr;
+			} else if (!is_create) {
+				/* Setup RX mode for BIS > 1 (only after BIG is created) */
+				setup_rx_mode(lll, lll->bis_curr);
+				return; /* Exit TX flow, switch to RX */
+			} else {
+				/* During BIG creation, skip BISes > 1 */
+				is_ctrl = 1U;
+			}
 		} else if (lll->bn_curr < lll->bn) {
 			lll->bn_curr++;
 			lll->bis_curr = 1U;
@@ -1043,4 +1080,138 @@ static void isr_done_term(void *param)
 	}
 
 	lll_isr_cleanup(param);
+}
+
+/* Setup RX mode for receiving on non-first BISes */
+static void setup_rx_mode(struct lll_adv_iso *lll, uint8_t bis)
+{
+	struct node_rx_pdu *node_rx;
+	uint8_t access_addr[4];
+	uint16_t data_chan_id;
+	uint8_t crc_init[3];
+	uint8_t pkt_flags;
+	uint32_t hcto;
+	uint32_t start_us;
+
+	/* Turn LED2 OFF at start of each RX window - will turn ON only if packet received */
+	led2_off();
+
+	/* Calculate the Access Address for this BIS */
+	util_bis_aa_le32(bis, lll->seed_access_addr, access_addr);
+	data_chan_id = lll_chan_id(access_addr);
+
+	/* Calculate CRC init for this BIS */
+	crc_init[0] = bis;
+	memcpy(&crc_init[1], lll->base_crc_init, sizeof(uint16_t));
+
+	/* Setup radio for RX */
+	radio_aa_set(access_addr);
+	radio_crc_configure(PDU_CRC_POLYNOMIAL, sys_get_le24(crc_init));
+
+	/* Configure packet size and flags */
+	pkt_flags = RADIO_PKT_CONF_FLAGS(RADIO_PKT_CONF_PDU_TYPE_BIS, lll->phy,
+					 RADIO_PKT_CONF_CTE_DISABLED);
+
+	radio_pkt_configure(RADIO_PKT_CONF_LENGTH_8BIT, lll->max_pdu, pkt_flags);
+
+	/* Get RX buffer */
+	node_rx = ull_iso_pdu_rx_alloc_peek(1U);
+	if (!node_rx) {
+		/* No buffer available, return to TX */
+		radio_isr_set(isr_tx_normal, lll);
+		return;
+	}
+
+	/* Setup RX packet buffer */
+	radio_pkt_rx_set(node_rx->pdu);
+
+	/* Calculate channel for this BIS */
+	const uint16_t event_counter = (lll->payload_count / lll->bn) - 1U;
+	uint8_t data_chan_use = lll_chan_iso_event(event_counter, data_chan_id, lll->data_chan_map,
+						   lll->data_chan_count, &lll->data_chan.prn_s,
+						   &lll->data_chan.remap_idx);
+	lll_chan_set(data_chan_use);
+
+	/* Calculate timing for this BIS */
+	const bool is_sequential_packing = (lll->bis_spacing >= (lll->sub_interval * lll->nse));
+	uint32_t bis_offset_us;
+
+	if (is_sequential_packing) {
+		bis_offset_us = (bis - 1U) * lll->sub_interval * lll->nse;
+	} else {
+		bis_offset_us = (bis - 1U) * lll->bis_spacing;
+	}
+
+	/* Calculate RX timeout */
+	hcto = bis_offset_us + lll->sub_interval;
+	hcto += radio_rx_ready_delay_get(lll->phy, lll->phy_flags);
+	hcto += addr_us_get(lll->phy);
+	hcto += radio_rx_chain_delay_get(lll->phy, lll->phy_flags);
+
+	/* Setup timing without stopping main timer */
+	start_us = radio_tmr_start_us(0U, hcto);
+
+#if defined(HAL_RADIO_GPIO_HAVE_LNA_PIN)
+	radio_gpio_lna_setup();
+	radio_gpio_pa_lna_enable(start_us + radio_rx_ready_delay_get(lll->phy, lll->phy_flags) -
+				 HAL_RADIO_GPIO_LNA_OFFSET);
+#endif
+
+	/* Enable RX and set ISR */
+	radio_switch_complete_and_rx(lll->phy);
+	radio_isr_set(isr_rx_grptlk, lll);
+}
+
+/* RX ISR for handling received packets on non-first BISes */
+static void isr_rx_grptlk(void *param)
+{
+	struct lll_adv_iso *lll = param;
+	uint8_t trx_done;
+	uint8_t crc_ok;
+
+	/* Read radio status */
+	trx_done = radio_is_done();
+	if (trx_done) {
+		crc_ok = radio_crc_is_valid();
+	} else {
+		crc_ok = 0U;
+	}
+
+	/* Clear radio status */
+	lll_isr_rx_status_reset();
+
+	/* LED2: Turn ON only when packet received with valid CRC (already OFF from setup) */
+	if (crc_ok) {
+		led2_on();
+	}
+
+	/* Packet reception acknowledged via LED2
+	 * NOTE: The broadcaster infrastructure doesn't have a receive path configured
+	 * in the ULL demux layer, so received packets cannot be forwarded to the host.
+	 * The packet is successfully received and CRC validated (indicated by LED2 ON),
+	 * confirming bidirectional group talk communication is working at the LLL layer.
+	 */
+
+	/* Continue to next BIS or return to TX */
+	if (lll->bis_curr < lll->num_bis) {
+		lll->bis_curr++;
+
+		/* Setup next BIS or return to TX */
+		if (lll->bis_curr > 1U) {
+			/* Setup RX for next BIS */
+			setup_rx_mode(lll, lll->bis_curr);
+		} else {
+			/* Return to TX on BIS 1 */
+			radio_isr_set(isr_tx_normal, lll);
+		}
+	} else {
+		/* All BISes processed, return to TX on BIS 1 */
+		lll->bis_curr = 1U;
+		radio_isr_set(isr_tx_normal, lll);
+	}
+
+	if (IS_ENABLED(CONFIG_BT_CTLR_PROFILE_ISR)) {
+		lll_prof_cputime_capture();
+		lll_prof_send();
+	}
 }
