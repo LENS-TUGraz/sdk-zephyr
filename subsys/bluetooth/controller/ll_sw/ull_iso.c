@@ -423,7 +423,7 @@ uint8_t ll_setup_iso_path(uint16_t handle, uint8_t path_dir, uint8_t path_id,
 
 	if (false) {
 
-#if defined(CONFIG_BT_CTLR_SYNC_ISO) || defined(CONFIG_BT_CTLR_CONN_ISO)
+#if defined(CONFIG_BT_CTLR_SYNC_ISO) || defined(CONFIG_BT_CTLR_CONN_ISO) || defined(CONFIG_BT_CTLR_ADV_ISO)
 #ifdef CONFIG_GRPTLK
 	} else if (path_dir == BT_HCI_DATAPATH_DIR_CTLR_TO_HOST) {
 		role = ISOAL_ROLE_BROADCAST_SINK;
@@ -482,7 +482,9 @@ uint8_t ll_setup_iso_path(uint16_t handle, uint8_t path_dir, uint8_t path_id,
 				sync_stream->dp = dp;
 			}
 
-			// TODO: do we need to set the dp here?
+			if (adv_stream) {
+				adv_stream->dp = dp;
+			}
 
 			dp->sink_hdl = sink_handle;
 			isoal_sink_enable(sink_handle);
@@ -491,9 +493,9 @@ uint8_t ll_setup_iso_path(uint16_t handle, uint8_t path_dir, uint8_t path_id,
 
 			return BT_HCI_ERR_CMD_DISALLOWED;
 		}
-#else /* !CONFIG_BT_CTLR_SYNC_ISO && !CONFIG_BT_CTLR_CONN_ISO */
+#else /* !CONFIG_BT_CTLR_SYNC_ISO && !CONFIG_BT_CTLR_CONN_ISO && !CONFIG_BT_CTLR_ADV_ISO */
 		ARG_UNUSED(sync_stream);
-#endif /* !CONFIG_BT_CTLR_SYNC_ISO && !CONFIG_BT_CTLR_CONN_ISO */
+#endif /* !CONFIG_BT_CTLR_SYNC_ISO && !CONFIG_BT_CTLR_CONN_ISO && !CONFIG_BT_CTLR_ADV_ISO */
 
 #if defined(CONFIG_BT_CTLR_ADV_ISO) || defined(CONFIG_BT_CTLR_CONN_ISO)
 #ifdef CONFIG_GRPTLK
@@ -1808,9 +1810,23 @@ static void iso_rx_demux(void *param)
 #endif /* CONFIG_GRPTLK */
 					dp = sync_stream ? sync_stream->dp : NULL;
 #endif /* CONFIG_BT_CTLR_SYNC_ISO */
+#if defined(CONFIG_BT_CTLR_ADV_ISO)
+				} else if (IS_ADV_ISO_HANDLE(handle)) {
+					struct lll_adv_iso_stream *adv_stream;
+					uint16_t stream_handle;
+
+					stream_handle = LL_BIS_ADV_IDX_FROM_HANDLE(handle);
+#ifdef CONFIG_GRPTLK
+					adv_stream = ull_adv_grptlk_lll_stream_get(stream_handle);
+#else
+					adv_stream = ull_adv_iso_stream_get(stream_handle);
+#endif /* CONFIG_GRPTLK */
+					dp = adv_stream ? adv_stream->dp : NULL;
+#endif /* CONFIG_BT_CTLR_ADV_ISO */
 				}
 
-#if defined(CONFIG_BT_CTLR_CONN_ISO) || defined(CONFIG_BT_CTLR_SYNC_ISO)
+#if defined(CONFIG_BT_CTLR_CONN_ISO) || defined(CONFIG_BT_CTLR_SYNC_ISO) || \
+	defined(CONFIG_BT_CTLR_ADV_ISO)
 				if (dp && dp->path_id != BT_HCI_DATAPATH_ID_HCI) {
 					/* If vendor specific datapath pass to ISO AL here,
 					 * in case of HCI destination it will be passed in
@@ -1827,7 +1843,8 @@ static void iso_rx_demux(void *param)
 
 					LL_ASSERT(err == ISOAL_STATUS_OK); /* TODO handle err */
 				}
-#endif /* CONFIG_BT_CTLR_CONN_ISO || CONFIG_BT_CTLR_SYNC_ISO */
+#endif /* CONFIG_BT_CTLR_CONN_ISO || CONFIG_BT_CTLR_SYNC_ISO || \
+	  CONFIG_BT_CTLR_ADV_ISO */
 
 				/* Let ISO PDU start its long journey upwards */
 				ll_iso_rx_put(link, rx);

@@ -259,6 +259,7 @@ static uint8_t grptlk_create(uint8_t big_handle, uint8_t adv_handle, uint8_t num
 		stream = (void *)adv_iso_stream_acquire();
 		stream->big_handle = big_handle;
 		stream->dp = NULL;
+		stream->rx_payload_number = 0U;
 
 		if (!stream->link_tx_free) {
 			stream->link_tx_free = &stream->link_tx;
