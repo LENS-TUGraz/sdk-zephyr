@@ -629,6 +629,8 @@ static void isr_tx(void *param)
 	uint8_t data_chan_use;
 	bool bis_transition = false;
 
+	uint32_t additional_skip_us = 0;
+
 	if (lll->bn_curr < lll->bn)
 	{
 		lll->bn_curr++;
@@ -648,22 +650,52 @@ static void isr_tx(void *param)
 	else
 	{
 		/* Move to next BIS when this one is exhausted */
-		if (lll->bis_curr < lll->num_bis) {
-			lll->bis_curr++;
-			lll->bn_curr = 1U;
-			lll->irc_curr = 1U;
-			lll->ptc_curr = 0U;
-			bis = lll->bis_curr;
-			bis_transition = true;
+		/* GRPTLK SKIP LOGIC: Loop until we find a valid BIS or finish the event */
+		while (lll->bis_curr < lll->num_bis) {
+			
+			/* Peek at the next BIS */
+			uint8_t next_bis = lll->bis_curr + 1U;
+			uint8_t next_bis_idx = next_bis - 1U;
 
-			/* Set TX power for this BIS based on payload availability */
-			bis_idx = lll->bis_curr - 1U;
-			if (lll->bis_payload[bis_idx - 1].valid) {
-				radio_tx_power_set(RADIO_TXP_DEFAULT);
-			} else {
-				radio_tx_power_set(-40);
+			/* Check payload validity of next BIS */
+			/* NOTE: Use [next_bis - 2U] because BIS N uses Payload N-1 (Index N-2) */
+			if (lll->bis_payload[next_bis_idx - 1U].valid) {
+				/* Found a valid one! Adopt it and break */
+				lll->bis_curr = next_bis;
+				lll->bn_curr = 1U;
+				lll->irc_curr = 1U;
+				lll->ptc_curr = 0U;
+				bis = lll->bis_curr;
+				bis_transition = true;
+				
+				/* Set TX power (should be valid, as per check) */
+				radio_tx_power_set(RADIO_TXP_DEFAULT); 
+				break;
 			}
-		} else {
+			
+			/* If not valid, SKIP IT */
+			lll->bis_curr = next_bis; /* Move past it */
+			additional_skip_us += lll->bis_spacing;
+			
+			/* Burn PRN for the skipped BIS */
+			{
+				uint8_t aa_skip[4];
+				uint16_t chan_id_skip;
+				const uint16_t evt_ctr = (lll->payload_count / lll->bn) - 1U;
+
+				util_bis_aa_le32(lll->bis_curr, lll->seed_access_addr, aa_skip);
+				chan_id_skip = lll_chan_id(aa_skip);
+
+				/* We must manually update lll->next_chan_use and internal state 
+				 * as if we were preparing this skipped BIS.
+				 * next_chan_calc_seq effectively does this lookahead.
+				 */
+				next_chan_calc_seq(lll, evt_ctr, chan_id_skip);
+			}
+		}
+
+		/* If we looped through everything and didn't break, lll->bis_curr == lll->num_bis */
+		if (!bis_transition) {
 			/* BIG done */
 			radio_isr_set(isr_done, lll);
 			radio_disable();
@@ -706,7 +738,7 @@ static void isr_tx(void *param)
 
 	/* Schedule next TX based on when current TX ends */
 	uint32_t end_us = radio_tmr_end_get();
-	uint32_t start_us = end_us + ifs_us;
+	uint32_t start_us = end_us + ifs_us + additional_skip_us;
 	start_us -= radio_tx_ready_delay_get(lll->phy, PHY_FLAGS_S8);
 
 	/* When transitioning between BISes, add timing correction for radio reconfiguration
@@ -1418,16 +1450,59 @@ isr_rx_next_subevent:
 
 	/* GRPTLK: Setup BISes 2-n for TX */
 	if ((bis != 0U) && (bis != 1U)) {
+		/* GRPTLK SKIP LOGIC:
+		 * If the next intended BIS has no valid payload, skip it.
+		 * We must iterate until we find a valid BIS or run out of BISes.
+		 * Crucially, we must update the channel map PRN for every skipped BIS
+		 * to stay in sync with the receiver.
+		 *
+		 * NOTE: GRPTLK re-transmits payload from (bis-1).
+		 * So for BIS 'b', we check payload[b-2].
+		 */
+		while ((bis <= lll->num_bis) && !lll->bis_payload[bis - 2U].valid) {
+			/* Burn the PRN for the skipped BIS */
+			uint8_t aa_skip[4];
+			uint16_t chan_id_skip;
+			const uint16_t evt_ctr = (lll->payload_count / lll->bn) - 1U;
+			
+			/* Explicitly reset state for skipped slot to ensure calculations work if logic depends on it */
+			lll->bn_curr = 1U;
+			lll->irc_curr = 1U;
+			lll->ptc_curr = 0U;
+
+			util_bis_aa_le32(bis, lll->seed_access_addr, aa_skip);
+			chan_id_skip = lll_chan_id(aa_skip);
+
+			/* Simulate channel selection to advance internal PRN state */
+			lll_chan_iso_event(evt_ctr, chan_id_skip,
+					   lll->data_chan_map,
+					   lll->data_chan_count,
+					   &lll->data_chan.prn_s,
+					   &lll->data_chan.remap_idx);
+
+			bis++;
+		}
+
+		/* If we ran out of BISes, nothing left to transmit */
+		if (bis > lll->num_bis) {
+			radio_isr_set(isr_done, lll);
+			radio_disable();
+			return;
+		}
+
+		/* Found a valid BIS to transmit */
 		struct pdu_bis *pdu_tx = (void *)radio_pkt_empty_get();
 		pdu_tx->ll_id = PDU_BIS_LLID_COMPLETE_END; // We don't support PDU fragments
 		pdu_tx->len = 0U;
 		pdu_tx->cstf = 0U; // We don't support Control PDUs
 		pdu_tx->cssn = 0U;
 
-		if (lll->bis_payload[0U].valid) {
-			pdu_tx->len = lll->max_pdu;
-			memcpy(pdu_tx->payload, lll->bis_payload[0U].data, lll->max_pdu);
-		}
+		/* We know it is valid because of the loop above. Use [bis - 2U] */
+		pdu_tx->len = lll->max_pdu;
+		memcpy(pdu_tx->payload, lll->bis_payload[bis - 2U].data, lll->max_pdu);
+
+		/* Set TX power (critical: prepare_cb might have set -40dBm) */
+		radio_tx_power_set(RADIO_TXP_DEFAULT);
 
 		uint8_t pkt_flags = RADIO_PKT_CONF_FLAGS(RADIO_PKT_CONF_PDU_TYPE_BIS, lll->phy,
 							 RADIO_PKT_CONF_CTE_DISABLED);
@@ -1444,6 +1519,8 @@ isr_rx_next_subevent:
 		if (IS_ENABLED(CONFIG_BT_CTLR_SYNC_ISO_SEQUENTIAL) &&
 		    (lll->bis_spacing >= (lll->sub_interval * lll->nse))) {
 			/* In sequential packing, BIS spacing defines the offset between BISes */
+			/* NOTE: This formula works automatically even for skips because 'bis'
+			 * has been incremented! */
 			hcto = lll->bis_spacing * ((uint8_t)bis - stream->bis_index);
 
 			/* Add the subevent offset within this BIS */
@@ -1480,6 +1557,9 @@ isr_rx_next_subevent:
 
 		/* Make scheduler state match what we just TX’d on */
 		lll->bis_curr = bis;
+		lll->bn_curr = 1U;
+		lll->irc_curr = 1U;
+		lll->ptc_curr = 0U;
 
 		/* Prime the next hop so isr_tx() has a valid immediate channel */
 		{
