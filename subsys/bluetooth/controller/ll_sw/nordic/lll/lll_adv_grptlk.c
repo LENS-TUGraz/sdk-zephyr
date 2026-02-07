@@ -41,6 +41,9 @@
 /* LED2 debugging for packet reception indication */
 #define LED2_PIN 7   /* P2.07 - Green LED 2 */
 
+/* Enable BIS2 RX payload debug logging (rate-limited printk) */
+#define GRPTLK_DEBUG_BIS2_RX 1
+
 static inline void led2_on(void) {
     NRF_P2_S->OUTSET = (1 << LED2_PIN);  /* LED2 ON */
 }
@@ -70,6 +73,8 @@ static void isr_tx_normal(void *param);
 static void isr_tx_common(void *param, radio_isr_cb_t isr_tx, radio_isr_cb_t isr_done, bool is_create);
 static void isr_rx_grptlk(void *param);
 static void setup_rx_mode(struct lll_adv_iso *lll, uint8_t bis);
+static void isr_rx_iso_data_valid(const struct lll_adv_iso *const lll,
+				  uint16_t handle, struct node_rx_pdu *node_rx);
 // #if defined(CONFIG_BT_CTLR_ADV_ISO_SEQUENTIAL)
 static void next_chan_calc_seq(struct lll_adv_iso *lll, uint16_t event_counter,
 			       uint16_t data_chan_id);
@@ -1191,13 +1196,74 @@ static void isr_rx_grptlk(void *param)
 	/* LED2: Turn ON only when packet received with valid CRC (already OFF from setup) */
 	if (crc_ok) {
 		led2_on();
+
+#if defined(GRPTLK_DEBUG_BIS2_RX)
+		/* Debug logging: Print BIS2 payload bytes (rate-limited) */
+		if (lll->bis_curr == 2U) {
+			static uint32_t rx_count = 0;
+			rx_count++;
+
+			/* Rate limit: print first 20 packets, then every 50th */
+			if ((rx_count <= 20) || ((rx_count % 50) == 0)) {
+				struct node_rx_pdu *node_rx;
+
+				/* Peek at the RX buffer (same one configured in setup_rx_mode) */
+				node_rx = ull_iso_pdu_rx_alloc_peek(1U);
+				if (node_rx) {
+					struct pdu_bis *pdu = (void *)node_rx->pdu;
+					uint8_t len = pdu->len;
+					uint8_t *payload = pdu->payload;
+
+					/* Print header and first 12 bytes of payload */
+					printk("d_00 BIS2 RX #%u len=%u payload=",
+					       rx_count, len);
+
+					uint8_t print_len = (len > 12) ? 12 : len;
+					for (uint8_t i = 0; i < print_len; i++) {
+						printk("%02X ", payload[i]);
+					}
+					if (len > 12) {
+						printk("...");
+					}
+					printk("\n");
+				}
+			}
+		}
+#endif /* GRPTLK_DEBUG_BIS2_RX */
+
+		/* Forward received uplink BIS packets (BIS 2-5) to ULL/host */
+		if (lll->bis_curr >= 2U) {
+			struct node_rx_pdu *node_rx;
+
+			/* Peek at the RX buffer to check PDU validity */
+			node_rx = ull_iso_pdu_rx_alloc_peek(1U);
+			if (node_rx) {
+				struct pdu_bis *pdu = (void *)node_rx->pdu;
+
+				/* Forward only if PDU has valid payload length */
+				if (pdu->len > 0) {
+					uint16_t stream_handle;
+					uint16_t bis_handle;
+
+					/* Allocate next RX buffer for future receptions */
+					ull_iso_pdu_rx_alloc();
+
+					/* Get stream handle for current BIS (bis_curr is 1-based) */
+					stream_handle = lll->stream_handle[lll->bis_curr - 1];
+
+					/* Convert stream handle to BIS handle for host */
+					bis_handle = LL_BIS_ADV_HANDLE_FROM_IDX(stream_handle);
+
+					/* Mark as valid ISO data and enqueue for ULL processing */
+					isr_rx_iso_data_valid(lll, bis_handle, node_rx);
+				}
+			}
+		}
 	}
 
-	/* Packet reception acknowledged via LED2
-	 * NOTE: The broadcaster infrastructure doesn't have a receive path configured
-	 * in the ULL demux layer, so received packets cannot be forwarded to the host.
-	 * The packet is successfully received and CRC validated (indicated by LED2 ON),
-	 * confirming bidirectional group talk communication is working at the LLL layer.
+	/* Packet reception: successfully forwarded to host via ULL/ISOAL pipeline.
+	 * LED2 ON indicates successful CRC validation at LLL layer.
+	 * Application iso_recv callback will be triggered for valid uplink packets.
 	 */
 
 	/* Continue to next BIS or return to TX */
@@ -1223,4 +1289,33 @@ static void isr_rx_grptlk(void *param)
 		lll_prof_cputime_capture();
 		lll_prof_send();
 	}
+}
+
+/* Helper function to mark received ISO data as valid and forward to ULL */
+static void isr_rx_iso_data_valid(const struct lll_adv_iso *const lll,
+				  uint16_t handle, struct node_rx_pdu *node_rx)
+{
+	struct lll_adv_iso_stream *stream;
+	struct node_rx_iso_meta *iso_meta;
+
+	/* Mark node as ISO PDU type */
+	node_rx->hdr.type = NODE_RX_TYPE_ISO_PDU;
+	node_rx->hdr.handle = handle;
+
+	/* Fill in ISO metadata */
+	iso_meta = &node_rx->rx_iso_meta;
+
+	/* For broadcaster RX, payload_number tracks received packets */
+	/* Use payload_count as the sequence base (similar to sync side) */
+	iso_meta->payload_number = lll->payload_count;
+
+	/* Calculate timestamp based on radio timer */
+	stream = ull_adv_grptlk_lll_stream_get(lll->stream_handle[lll->bis_curr - 1]);
+	iso_meta->timestamp = HAL_TICKER_TICKS_TO_US(radio_tmr_start_get()) +
+			      radio_tmr_aa_restore() -
+			      addr_us_get(lll->phy);
+	iso_meta->status = 0; /* Valid data */
+
+	/* Link the node into the ISO RX queue for ULL processing */
+	ll_iso_rx_put(node_rx->hdr.link, node_rx);
 }
