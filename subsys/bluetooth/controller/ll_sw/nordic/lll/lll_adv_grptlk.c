@@ -538,18 +538,17 @@ static void isr_tx_common(void *param, radio_isr_cb_t isr_tx, radio_isr_cb_t isr
 			/* Move to next BIS */
 			lll->bis_curr++;
 
-			/* TX on BIS 1, RX on BIS > 1 */
-			/* FIX: Check for 2U since we already incremented from 1 */
-			if (lll->bis_curr == 2U) {
-				/* Just moved from BIS 1 to BIS 2, end TX subevents */
-				is_ctrl = 1U;
-			} else if (!is_create) {
-				/* Setup RX mode for BIS > 1 (only after BIG is created) */
+			/* TX on BIS 1, RX on BIS >= 2 */
+			if (lll->bis_curr >= 2U && !is_create) {
+				/* Setup RX mode for BIS >= 2 (switch from TX to RX) */
 				setup_rx_mode(lll, lll->bis_curr);
 				return; /* Exit TX flow, switch to RX */
-			} else {
-				/* During BIG creation, skip BISes > 1 */
+			} else if (lll->bis_curr >= 2U) {
+				/* During BIG creation, skip BISes >= 2 */
 				is_ctrl = 1U;
+			} else {
+				/* Continue with next BIS in TX mode */
+				bis = lll->bis_curr;
 			}
 		} else {
 			is_ctrl = 1U;
@@ -562,18 +561,17 @@ static void isr_tx_common(void *param, radio_isr_cb_t isr_tx, radio_isr_cb_t isr
 		if (lll->bis_curr < lll->num_bis) {
 			lll->bis_curr++;
 
-			/* TX on BIS 1, RX on BIS > 1 */
-			/* FIX: Check for 2U since we already incremented from 1 */
-			if (lll->bis_curr == 2U) {
-				/* Just moved from BIS 1 to BIS 2, end TX subevents */
-				is_ctrl = 1U;
-			} else if (!is_create) {
-				/* Setup RX mode for BIS > 1 (only after BIG is created) */
+			/* TX on BIS 1, RX on BIS >= 2 */
+			if (lll->bis_curr >= 2U && !is_create) {
+				/* Setup RX mode for BIS >= 2 (switch from TX to RX) */
 				setup_rx_mode(lll, lll->bis_curr);
 				return; /* Exit TX flow, switch to RX */
-			} else {
-				/* During BIG creation, skip BISes > 1 */
+			} else if (lll->bis_curr >= 2U) {
+				/* During BIG creation, skip BISes >= 2 */
 				is_ctrl = 1U;
+			} else {
+				/* Continue with next BIS in TX mode */
+				bis = lll->bis_curr;
 			}
 		} else if (lll->bn_curr < lll->bn) {
 			lll->bn_curr++;
