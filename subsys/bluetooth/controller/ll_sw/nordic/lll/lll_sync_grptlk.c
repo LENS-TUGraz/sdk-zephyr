@@ -724,6 +724,7 @@ static void isr_tx(void *param)
 	radio_pkt_tx_set(p);
 
 	uint8_t aa[4], crc[3];
+
 	util_bis_aa_le32(bis, lll->seed_access_addr, aa);
 	crc[0] = bis;
 	memcpy(&crc[1], lll->base_crc_init, sizeof(uint16_t));
@@ -1500,6 +1501,23 @@ isr_rx_next_subevent:
 		/* We know it is valid because of the loop above. Use [bis - 2U] */
 		pdu_tx->len = lll->max_pdu;
 		memcpy(pdu_tx->payload, lll->bis_payload[bis - 2U].data, lll->max_pdu);
+
+		/* GRPTLK FIX: Reconfigure radio AA for uplink TX after skip logic */
+		{
+			uint8_t tx_access_addr[4];
+			uint8_t tx_crc_init[3];
+
+			/* Calculate correct AA for the current bis value (after skip logic) */
+			util_bis_aa_le32(bis, lll->seed_access_addr, tx_access_addr);
+
+			/* CRC init remains BIS-specific per Bluetooth spec */
+			tx_crc_init[0] = bis;
+			memcpy(&tx_crc_init[1], lll->base_crc_init, sizeof(uint16_t));
+
+			/* Reconfigure radio for TX with correct AA and CRC */
+			radio_aa_set(tx_access_addr);
+			radio_crc_configure(PDU_CRC_POLYNOMIAL, sys_get_le24(tx_crc_init));
+		}
 
 		/* Set TX power (critical: prepare_cb might have set -40dBm) */
 		radio_tx_power_set(RADIO_TXP_DEFAULT);

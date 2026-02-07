@@ -1096,8 +1096,16 @@ static void setup_rx_mode(struct lll_adv_iso *lll, uint8_t bis)
 	/* Turn LED2 OFF at start of each RX window - will turn ON only if packet received */
 	led2_off();
 
+	/* CRITICAL FIX: Reverse the seed corruption */
+	/* Seed is corrupted: byte[2] XOR 0xA0, byte[3] XOR 0xFF */
+	/* Reverse it to get correct seed for AA calculation */
+	uint8_t corrected_seed[4];
+	memcpy(corrected_seed, lll->seed_access_addr, 4);
+	corrected_seed[2] ^= 0xA0;  /* Reverse byte 2 corruption */
+	corrected_seed[3] ^= 0xFF;  /* Reverse byte 3 corruption */
+
 	/* Calculate the Access Address for this BIS */
-	util_bis_aa_le32(bis, lll->seed_access_addr, access_addr);
+	util_bis_aa_le32(bis, corrected_seed, access_addr);
 	data_chan_id = lll_chan_id(access_addr);
 
 	/* Calculate CRC init for this BIS */
@@ -1193,17 +1201,18 @@ static void isr_rx_grptlk(void *param)
 	 */
 
 	/* Continue to next BIS or return to TX */
-	if (lll->bis_curr < lll->num_bis) {
-		lll->bis_curr++;
+	/* Only proceed if RX was actually attempted (not a spurious interrupt) */
+	if (!trx_done) {
+		/* Spurious interrupt - ignore it, RX is already configured */
+		return;
+	}
 
-		/* Setup next BIS or return to TX */
-		if (lll->bis_curr > 1U) {
-			/* Setup RX for next BIS */
-			setup_rx_mode(lll, lll->bis_curr);
-		} else {
-			/* Return to TX on BIS 1 */
-			radio_isr_set(isr_tx_normal, lll);
-		}
+	/* Move to next BIS after completing current RX */
+	lll->bis_curr++;
+
+	if (lll->bis_curr <= lll->num_bis) {
+		/* Setup RX for next BIS */
+		setup_rx_mode(lll, lll->bis_curr);
 	} else {
 		/* All BISes processed, return to TX on BIS 1 */
 		lll->bis_curr = 1U;
