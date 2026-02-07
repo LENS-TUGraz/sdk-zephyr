@@ -313,9 +313,11 @@ static int prepare_cb_common(struct lll_prepare_param *p)
 	}
 
 	if (!link) {
+		/* GRPTLK FIX: Transmit minimal valid PDU instead of empty (len=0) */
 		pdu = radio_pkt_empty_get();
 		pdu->ll_id = lll->framing ? PDU_BIS_LLID_FRAMED : PDU_BIS_LLID_START_CONTINUE;
-		pdu->len = 0U;
+		pdu->len = 1U;  /* Minimal 1-byte payload instead of len=0 */
+		pdu->payload[0] = 0x00;  /* Zero-filled until real data arrives */
 	} else {
 		pdu = (void *)tx->pdu;
 	}
@@ -780,10 +782,14 @@ Pre-Transmission
 next valid
 			 *        subevent.
 			 */
+			/* GRPTLK FIX: Transmit minimal valid PDU instead of empty (len=0)
+			 * during startup when TX queue is not yet populated.
+			 */
 			pdu = radio_pkt_empty_get();
 			pdu->ll_id =
 				lll->framing ? PDU_BIS_LLID_FRAMED : PDU_BIS_LLID_START_CONTINUE;
-			pdu->len = 0U;
+			pdu->len = 1U;  /* Minimal 1-byte payload instead of len=0 */
+			pdu->payload[0] = 0x00;  /* Zero-filled until real data arrives */
 		} else {
 			pdu = (void *)tx->pdu;
 		}
@@ -1231,8 +1237,11 @@ static void isr_rx_grptlk(void *param)
 		}
 #endif /* GRPTLK_DEBUG_BIS2_RX */
 
-		/* Forward received uplink BIS packets (BIS 2-5) to ULL/host */
-		if (lll->bis_curr >= 2U) {
+		/* Forward received uplink BIS packets - ONLY BIS 2 (first uplink channel) */
+		/* GRPTLK: d_01 (talker) transmits only on BIS 2. BIS 3-5 are reserved for
+		 * additional talkers but not used in current 1-talker configuration.
+		 */
+		if (lll->bis_curr == 2U) {
 			struct node_rx_pdu *node_rx;
 
 			/* Peek at the RX buffer to check PDU validity */
@@ -1248,8 +1257,8 @@ static void isr_rx_grptlk(void *param)
 					/* Allocate next RX buffer for future receptions */
 					ull_iso_pdu_rx_alloc();
 
-					/* Get stream handle for current BIS (bis_curr is 1-based) */
-					stream_handle = lll->stream_handle[lll->bis_curr - 1];
+					/* Get stream handle for BIS 2 (bis_curr=2 → index 1) */
+					stream_handle = lll->stream_handle[1];
 
 					/* Convert stream handle to BIS handle for host */
 					bis_handle = LL_BIS_ADV_HANDLE_FROM_IDX(stream_handle);
@@ -1297,6 +1306,7 @@ static void isr_rx_iso_data_valid(const struct lll_adv_iso *const lll,
 {
 	struct lll_adv_iso_stream *stream;
 	struct node_rx_iso_meta *iso_meta;
+	static uint64_t bis2_rx_payload_count = 0;
 
 	/* Mark node as ISO PDU type */
 	node_rx->hdr.type = NODE_RX_TYPE_ISO_PDU;
@@ -1305,12 +1315,13 @@ static void isr_rx_iso_data_valid(const struct lll_adv_iso *const lll,
 	/* Fill in ISO metadata */
 	iso_meta = &node_rx->rx_iso_meta;
 
-	/* For broadcaster RX, payload_number tracks received packets */
-	/* Use payload_count as the sequence base (similar to sync side) */
-	iso_meta->payload_number = lll->payload_count;
+	/* For broadcaster RX, track received BIS2 packets with dedicated counter
+	 * This ensures seq_num is monotonic and not tied to TX payload_count
+	 */
+	iso_meta->payload_number = bis2_rx_payload_count++;
 
 	/* Calculate timestamp based on radio timer */
-	stream = ull_adv_grptlk_lll_stream_get(lll->stream_handle[lll->bis_curr - 1]);
+	stream = ull_adv_grptlk_lll_stream_get(lll->stream_handle[1]);  /* BIS 2 = index 1 */
 	iso_meta->timestamp = HAL_TICKER_TICKS_TO_US(radio_tmr_start_get()) +
 			      radio_tmr_aa_restore() -
 			      addr_us_get(lll->phy);

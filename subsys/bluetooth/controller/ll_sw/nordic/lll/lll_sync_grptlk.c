@@ -1519,6 +1519,15 @@ isr_rx_next_subevent:
 			radio_crc_configure(PDU_CRC_POLYNOMIAL, sys_get_le24(tx_crc_init));
 		}
 
+
+	/* Clear RX-only RSSI shortcuts before TX (spec compliance) */
+	NRF_RADIO->SHORTS &= ~(RADIO_SHORTS_ADDRESS_RSSISTART_Msk
+#if defined(CONFIG_SOC_SERIES_NRF51X) || \
+	defined(CONFIG_SOC_COMPATIBLE_NRF52X) || \
+	defined(CONFIG_SOC_COMPATIBLE_NRF5340_CPUNET)
+			       | RADIO_SHORTS_DISABLED_RSSISTOP_Msk
+#endif
+			       );
 		/* Set TX power (critical: prepare_cb might have set -40dBm) */
 		radio_tx_power_set(RADIO_TXP_DEFAULT);
 
