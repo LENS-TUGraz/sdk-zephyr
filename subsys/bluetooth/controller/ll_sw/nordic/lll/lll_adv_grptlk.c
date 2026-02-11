@@ -85,6 +85,8 @@ static void next_chan_calc_seq(struct lll_adv_iso *lll, uint16_t event_counter,
 static void isr_done_create(void *param);
 static void isr_done_term(void *param);
 
+extern void ll_iso_rx_put(memq_link_t *link, void *rx);
+
 // int lll_adv_iso_init(void)
 // {
 // 	int err;
@@ -1107,21 +1109,17 @@ static void setup_rx_mode(struct lll_adv_iso *lll, uint8_t bis)
 	/* Turn LED2 OFF at start of each RX window - will turn ON only if packet received */
 	led2_off();
 
-	/* CRITICAL FIX: Reverse the seed corruption */
-	/* Seed is corrupted: byte[2] XOR 0xA0, byte[3] XOR 0xFF */
-	/* Reverse it to get correct seed for AA calculation */
-	uint8_t corrected_seed[4];
-	memcpy(corrected_seed, lll->seed_access_addr, 4);
-	corrected_seed[2] ^= 0xA0;  /* Reverse byte 2 corruption */
-	corrected_seed[3] ^= 0xFF;  /* Reverse byte 3 corruption */
+	util_bis_aa_le32(bis, lll->seed_access_addr, access_addr);
+	printk("setup_rx_mode BIS%u - access_addr: %02x %02x %02x %02x\n", bis, access_addr[0], access_addr[1], access_addr[2], access_addr[3]);
 
-	/* Calculate the Access Address for this BIS */
-	util_bis_aa_le32(bis, corrected_seed, access_addr);
 	data_chan_id = lll_chan_id(access_addr);
 
 	/* Calculate CRC init for this BIS */
 	crc_init[0] = bis;
 	memcpy(&crc_init[1], lll->base_crc_init, sizeof(uint16_t));
+
+	// /* CRITICAL FIX: Ensure clean radio state before RX setup */
+	// radio_switch_complete_and_disable();
 
 	/* Setup radio for RX */
 	radio_aa_set(access_addr);
@@ -1205,7 +1203,7 @@ static void isr_rx_grptlk(void *param)
 
 #if defined(GRPTLK_DEBUG_BIS2_RX)
 		/* Debug logging: Print BIS2 payload bytes (rate-limited) */
-		if (lll->bis_curr == 2U) {
+		if (lll->bis_curr >= 2U && lll->bis_curr <= 5U) {
 			static uint32_t rx_count = 0;
 			rx_count++;
 
@@ -1221,8 +1219,8 @@ static void isr_rx_grptlk(void *param)
 					uint8_t *payload = pdu->payload;
 
 					/* Print header and first 12 bytes of payload */
-					printk("d_00 BIS2 RX #%u len=%u payload=",
-					       rx_count, len);
+					printk("d_00 BIS%u RX #%u len=%u payload=",
+					       lll->bis_curr, rx_count, len);
 
 					uint8_t print_len = (len > 12) ? 12 : len;
 					for (uint8_t i = 0; i < print_len; i++) {
@@ -1237,11 +1235,9 @@ static void isr_rx_grptlk(void *param)
 		}
 #endif /* GRPTLK_DEBUG_BIS2_RX */
 
-		/* Forward received uplink BIS packets - ONLY BIS 2 (first uplink channel) */
-		/* GRPTLK: d_01 (talker) transmits only on BIS 2. BIS 3-5 are reserved for
-		 * additional talkers but not used in current 1-talker configuration.
-		 */
-		if (lll->bis_curr == 2U) {
+		/* Forward received uplink BIS packets - ALL BIS >= 2 (uplink channels) */
+		/* GRPTLK: Forward any valid packet received on uplink slots */
+		if (lll->bis_curr >= 2U) {
 			struct node_rx_pdu *node_rx;
 
 			/* Peek at the RX buffer to check PDU validity */
@@ -1257,8 +1253,9 @@ static void isr_rx_grptlk(void *param)
 					/* Allocate next RX buffer for future receptions */
 					ull_iso_pdu_rx_alloc();
 
-					/* Get stream handle for BIS 2 (bis_curr=2 → index 1) */
-					stream_handle = lll->stream_handle[1];
+					/* Get stream handle for current BIS (index = bis_curr - 1) */
+					/* BIS 2 -> Index 1, BIS 3 -> Index 2, etc. */
+					stream_handle = lll->stream_handle[lll->bis_curr - 1];
 
 					/* Convert stream handle to BIS handle for host */
 					bis_handle = LL_BIS_ADV_HANDLE_FROM_IDX(stream_handle);
@@ -1277,18 +1274,23 @@ static void isr_rx_grptlk(void *param)
 
 	/* Continue to next BIS or return to TX */
 	/* Only proceed if RX was actually attempted (not a spurious interrupt) */
-	if (!trx_done) {
-		/* Spurious interrupt - ignore it, RX is already configured */
-		return;
-	}
+	// if (!trx_done) {
+	// 	/* Spurious interrupt - ignore it, RX is already configured */
+	// 	return;
+	// }
+
+	/* DEBUG: Track which BIS triggered this ISR */
+	printk("ISR BIS%u: done=%d, crc=%d\n", lll->bis_curr, trx_done, crc_ok);
 
 	/* Move to next BIS after completing current RX */
 	lll->bis_curr++;
 
 	if (lll->bis_curr <= lll->num_bis) {
+		printk("Moving to BIS %u\n", lll->bis_curr);
 		/* Setup RX for next BIS */
 		setup_rx_mode(lll, lll->bis_curr);
 	} else {
+		printk("Event Done. Back to BIS 1 TX.\n");
 		/* All BISes processed, return to TX on BIS 1 */
 		lll->bis_curr = 1U;
 		radio_isr_set(isr_tx_normal, lll);
@@ -1321,12 +1323,14 @@ static void isr_rx_iso_data_valid(const struct lll_adv_iso *const lll,
 	iso_meta->payload_number = bis2_rx_payload_count++;
 
 	/* Calculate timestamp based on radio timer */
-	stream = ull_adv_grptlk_lll_stream_get(lll->stream_handle[1]);  /* BIS 2 = index 1 */
+	/* Use current BIS stream handle for timestamp reference */
+	stream = ull_adv_grptlk_lll_stream_get(lll->stream_handle[lll->bis_curr - 1U]);
 	iso_meta->timestamp = HAL_TICKER_TICKS_TO_US(radio_tmr_start_get()) +
 			      radio_tmr_aa_restore() -
 			      addr_us_get(lll->phy);
 	iso_meta->status = 0; /* Valid data */
 
 	/* Link the node into the ISO RX queue for ULL processing */
+	printk("RX OK: handle=%u len=%u\n", handle, ((struct pdu_bis *)node_rx->pdu)->len);
 	ll_iso_rx_put(node_rx->hdr.link, node_rx);
 }
