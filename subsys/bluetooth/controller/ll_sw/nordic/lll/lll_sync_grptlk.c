@@ -424,7 +424,7 @@ static int prepare_cb_common(struct lll_prepare_param *p)
 	radio_tmr_hcto_configure(hcto);
 
 	radio_tmr_end_capture();
-	radio_rssi_measure();
+	// radio_rssi_measure();
 
 #if defined(HAL_RADIO_GPIO_HAVE_LNA_PIN)
 	radio_gpio_lna_setup();
@@ -453,8 +453,6 @@ static int prepare_cb_common(struct lll_prepare_param *p)
 
 	ret = lll_prepare_done(lll);
 	LL_ASSERT(!ret);
-
-	printk("%s: PREPARE pc %u\n", __func__, (lll->payload_count - lll->bn));
 
 	/* Calculate ahead the next subevent channel index */
 	if (false) {
@@ -623,8 +621,6 @@ static void isr_rx_estab(void *param)
 static void isr_tx(void *param)
 {
 	struct lll_sync_iso *lll = param;
-
-	printk("%s: bis %u\n", __func__, lll->bis_curr);
 
 	lll_isr_tx_status_reset();
 
@@ -801,7 +797,6 @@ static void isr_rx(void *param)
 
 	/* Read radio status and events */
 	trx_done = radio_is_done();
-	printk("%s: bis_curr %u trx done  %u\n", __func__, lll->bis_curr, trx_done);
 	if (!trx_done) {
 		/* Clear radio rx status and events */
 		lll_isr_rx_status_reset();
@@ -818,8 +813,6 @@ static void isr_rx(void *param)
 	crc_ok = radio_crc_is_valid();
 	rssi_ready = radio_rssi_is_ready();
 	trx_cnt++;
-
-	printk("%s: bis_curr %u crc %u\n", __func__, lll->bis_curr, crc_ok);
 
 	/* Save the AA captured for the first anchor point sync */
 	if (!radio_tmr_aa_restore()) {
@@ -1456,11 +1449,8 @@ isr_rx_next_subevent:
 
 	lll_chan_set(data_chan_use);
 
-	printk("%s: bis_curr %u bis %u\n", __func__, lll->bis_curr, bis);
-
 	/* GRPTLK: Setup BISes 2-n for TX */
 	if ((bis != 0U) && (bis != 1U)) {
-#if 0
 		/* GRPTLK SKIP LOGIC:
 		 * If the next intended BIS has no valid payload, skip it.
 		 * We must iterate until we find a valid BIS or run out of BISes.
@@ -1493,7 +1483,6 @@ isr_rx_next_subevent:
 
 			bis++;
 		}
-#endif
 
 		/* If we ran out of BISes, nothing left to transmit */
 		if (bis > lll->num_bis) {
@@ -1509,11 +1498,9 @@ isr_rx_next_subevent:
 		pdu_tx->cstf = 0U; // We don't support Control PDUs
 		pdu_tx->cssn = 0U;
 
-#if 0
 		/* We know it is valid because of the loop above. Use [bis - 2U] */
 		pdu_tx->len = lll->max_pdu;
 		memcpy(pdu_tx->payload, lll->bis_payload[bis - 2U].data, lll->max_pdu);
-#endif
 
 		/* GRPTLK FIX: Reconfigure radio AA for uplink TX after skip logic */
 		{
@@ -1532,15 +1519,6 @@ isr_rx_next_subevent:
 			radio_crc_configure(PDU_CRC_POLYNOMIAL, sys_get_le24(tx_crc_init));
 		}
 
-
-	/* Clear RX-only RSSI shortcuts before TX (spec compliance) */
-	NRF_RADIO->SHORTS &= ~(RADIO_SHORTS_ADDRESS_RSSISTART_Msk
-#if defined(CONFIG_SOC_SERIES_NRF51X) || \
-	defined(CONFIG_SOC_COMPATIBLE_NRF52X) || \
-	defined(CONFIG_SOC_COMPATIBLE_NRF5340_CPUNET)
-			       | RADIO_SHORTS_DISABLED_RSSISTOP_Msk
-#endif
-			       );
 		/* Set TX power (critical: prepare_cb might have set -40dBm) */
 		radio_tx_power_set(RADIO_TXP_DEFAULT);
 
@@ -1567,7 +1545,6 @@ isr_rx_next_subevent:
 			nse = ((lll->irc_curr - 1U) * lll->bn) + (lll->bn_curr - 1U) +
 			      lll->ptc_curr + lll->ctrl;
 			hcto += lll->sub_interval * nse;
-			printk("%s: bis %u chnl %u hcto %u\n", __func__, bis, data_chan_use, hcto);
 		} else {
 			LL_ASSERT(false);
 			hcto = 0U;

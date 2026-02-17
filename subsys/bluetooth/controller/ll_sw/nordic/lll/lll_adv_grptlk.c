@@ -400,7 +400,7 @@ static int prepare_cb_common(struct lll_prepare_param *p)
 	remainder = p->remainder;
 	start_us = radio_tmr_start(1U, ticks_at_start, remainder);
 
-	printk("%s: PREPARE pc %u start_us %u\n", __func__, payload_count, start_us);
+	// printk("%s: PREPARE pc %u start_us %u\n", __func__, payload_count, start_us);
 
 	if (IS_ENABLED(CONFIG_BT_CTLR_PROFILE_ISR) || IS_ENABLED(HAL_RADIO_GPIO_HAVE_PA_PIN)) {
 		/* setup capture of PDU end timestamp */
@@ -498,7 +498,7 @@ static void isr_tx_common(void *param, radio_isr_cb_t isr_tx, radio_isr_cb_t isr
 
 	lll = param;
 
-	printk("%s: bis_curr %u\n", __func__, lll->bis_curr);
+	// printk("%s: bis_curr %u\n", __func__, lll->bis_curr);
 
 	/* Sequential or Interleaved BIS subevents decision */
 	const bool is_sequential_packing = (lll->bis_spacing >= (lll->sub_interval * lll->nse));
@@ -1017,7 +1017,7 @@ static void setup_rx_mode(struct lll_adv_iso *lll, uint8_t bis)
 	uint32_t hcto;
 	uint32_t start_us;
 
-	printk("%s: bis %u\n", __func__, bis);
+	// printk("%s: bis %u\n", __func__, bis);
 
 	util_bis_aa_le32(bis, lll->seed_access_addr, access_addr);
 	data_chan_id = lll_chan_id(access_addr);
@@ -1069,12 +1069,12 @@ static void setup_rx_mode(struct lll_adv_iso *lll, uint8_t bis)
 		bis_offset_us = (bis - 1U) * lll->bis_spacing;
 	}
 
-	printk("%s: subevent %u lat %u ready %u aa %u end %u\n", __func__,
-		bis_offset_us,
-		radio_tmr_start_latency_get(),
-		radio_tmr_ready_get(),
-		radio_tmr_aa_get(),
-		radio_tmr_end_get());
+	// printk("%s: subevent %u lat %u ready %u aa %u end %u\n", __func__,
+	// 	bis_offset_us,
+	// 	radio_tmr_start_latency_get(),
+	// 	radio_tmr_ready_get(),
+	// 	radio_tmr_aa_get(),
+	// 	radio_tmr_end_get());
 
 	/* offset to the subevent */
 	hcto = bis_offset_us;
@@ -1090,12 +1090,12 @@ static void setup_rx_mode(struct lll_adv_iso *lll, uint8_t bis)
 	/* active clock jitter for reception */
 	hcto -= (EVENT_CLOCK_JITTER_US << 1U);
 
-	printk("%s: bis %u chnl %u start_us %u\n", __func__, bis, data_chan_use, hcto);
+	// printk("%s: bis %u chnl %u start_us %u\n", __func__, bis, data_chan_use, hcto);
 
 	/* Setup timing without stopping main timer */
 	start_us = radio_tmr_start_us(0U, hcto);
 
-	printk("%s: actual start_us %u\n", __func__, start_us);
+	// printk("%s: actual start_us %u\n", __func__, start_us);
 
 	/* header complete timeout to consider the radio ready delay, chain
 	 * delay and access address duration.
@@ -1136,7 +1136,7 @@ static void isr_rx_grptlk(void *param)
 		crc_ok = 0U;
 	}
 
-	printk("%s: trx_done %u crc %u\n", __func__, trx_done, crc_ok);
+	// printk("%s: trx_done %u crc %u\n", __func__, trx_done, crc_ok);
 
 	/* Clear radio status */
 	lll_isr_rx_status_reset();
