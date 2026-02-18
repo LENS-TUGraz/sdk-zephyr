@@ -1471,11 +1471,11 @@ isr_rx_next_subevent:
 			lll->irc_curr = 1U;
 			lll->ptc_curr = 0U;
 
-			util_bis_aa_le32(bis, lll->seed_access_addr, aa_skip);
+			util_bis_aa_le32(bis + 1, lll->seed_access_addr, aa_skip);
 			chan_id_skip = lll_chan_id(aa_skip);
 
 			/* Simulate channel selection to advance internal PRN state */
-			lll_chan_iso_event(evt_ctr, chan_id_skip,
+			data_chan_use = lll_chan_iso_event(evt_ctr, chan_id_skip,
 					   lll->data_chan_map,
 					   lll->data_chan_count,
 					   &lll->data_chan.prn_s,
