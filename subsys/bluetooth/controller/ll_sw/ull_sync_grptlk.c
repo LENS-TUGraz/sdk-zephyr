@@ -28,6 +28,7 @@
 #include "lll_sync_grptlk.h"
 #include "lll_conn.h"
 #include "lll_conn_iso.h"
+#include "lll_iso_tx.h"
 
 #include "isoal.h"
 
@@ -395,6 +396,29 @@ void ull_sync_grptlk_stream_release(struct ll_sync_iso_set *sync_iso)
 		LL_ASSERT(stream);
 
 		LL_ASSERT(!stream->link_tx_free);
+
+		/* Drain any uplink TX SDUs that the host queued but were not
+		 * transmitted before sync was lost. Without this, memq_deinit()
+		 * returns NULL (queue non-empty) and the LL_ASSERT below fires.
+		 */
+		{
+			struct node_tx_iso *tx;
+			memq_link_t *link2;
+			uint16_t bis_handle;
+
+			bis_handle = LL_BIS_SYNC_HANDLE_FROM_IDX(stream_handle);
+			link2 = memq_dequeue(stream->memq_tx.tail,
+					     &stream->memq_tx.head,
+					     (void **)&tx);
+			while (link2) {
+				tx->next = link2;
+				ull_iso_lll_ack_enqueue(bis_handle, tx);
+				link2 = memq_dequeue(stream->memq_tx.tail,
+						     &stream->memq_tx.head,
+						     (void **)&tx);
+			}
+		}
+
 		link = memq_deinit(&stream->memq_tx.head,
 				   &stream->memq_tx.tail);
 		LL_ASSERT(link);
