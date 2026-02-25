@@ -652,8 +652,15 @@ static void hci_num_completed_packets(struct net_buf *buf)
 
 #if defined(CONFIG_GRPTLK)
 		if (IS_ENABLED(CONFIG_GRPTLK_RECV)) {
+#if defined(CONFIG_BT_CTLR_ADV_ISO_STREAM_COUNT)
 			conn = bt_conn_lookup_handle(
 				handle + CONFIG_BT_CTLR_ADV_ISO_STREAM_COUNT + 1, BT_CONN_TYPE_ALL);
+#elif defined(CONFIG_BT_ISO_MAX_CHAN)
+			conn = bt_conn_lookup_handle(
+				handle + CONFIG_BT_ISO_MAX_CHAN + 1, BT_CONN_TYPE_ALL);
+#else
+			conn = bt_conn_lookup_handle(handle, BT_CONN_TYPE_ALL);
+#endif
 		} else {
 			conn = bt_conn_lookup_handle(handle, BT_CONN_TYPE_ALL);
 		}

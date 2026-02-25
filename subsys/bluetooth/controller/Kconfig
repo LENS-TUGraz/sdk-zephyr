@@ -152,6 +152,14 @@ config BT_LL_SW_SPLIT
 	help
 	  Use Zephyr software Bluetooth LE Link Layer ULL LLL split implementation.
 
+config GRPTLK
+	bool "GRPTLK [EXPERIMENTAL]"
+	default n
+	depends on BT_LL_SW_SPLIT
+	select EXPERIMENTAL
+	help
+	  Enable GRPTLK-specific Bluetooth Controller behavior.
+
 config BT_CTLR_HCI
 	bool "Host Controller Interface (HCI)"
 	default y

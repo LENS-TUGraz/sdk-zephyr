@@ -735,7 +735,7 @@ static void isr_tx(void *param)
 	 * In sequential packing, all subevents (including between BISes) use sub_interval
 	 */
 	uint32_t ifs_us = lll->sub_interval;
-	ifs_us -= PDU_BIS_US(p->len, ((p->len) ? lll->enc : 0U), lll->phy, lll->phy_flags);
+	ifs_us -= PDU_BIS_US(p->len, ((p->len) ? lll->enc : 0U), lll->phy, PHY_FLAGS_S8);
 
 	/* Schedule next TX based on when current TX ends */
 	uint32_t end_us = radio_tmr_end_get();
