@@ -422,7 +422,7 @@ static uint8_t big_create(uint8_t big_handle, uint8_t adv_handle, uint8_t num_bi
 		 */
 		lll_adv_iso->sub_interval = PDU_BIS_US(lll_adv_iso->max_pdu, encryption,
 						phy, lll_adv_iso->phy_flags) +
-						EVENT_MSS_US;
+						EVENT_MSS_US * 2U;
 		ctrl_spacing = PDU_BIS_US(sizeof(struct pdu_big_ctrl), encryption, phy,
 					lll_adv_iso->phy_flags);
 		latency_packing = lll_adv_iso->sub_interval * lll_adv_iso->nse *
@@ -1243,7 +1243,7 @@ static uint32_t adv_iso_time_get(const struct ll_adv_iso_set *adv_iso, bool max)
 
 	pdu_spacing = PDU_BIS_US(lll_iso->max_pdu, lll_iso->enc, lll_iso->phy,
 				 lll_iso->phy_flags) +
-		      EVENT_MSS_US;
+		      EVENT_MSS_US * 2U;
 	ctrl_spacing = PDU_BIS_US(sizeof(struct pdu_big_ctrl), lll_iso->enc,
 				  lll_iso->phy, lll_iso->phy_flags);
 
