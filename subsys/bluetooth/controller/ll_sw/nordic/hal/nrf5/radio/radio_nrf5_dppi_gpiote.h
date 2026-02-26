@@ -14,6 +14,30 @@ static inline void hal_palna_ppi_setup(void)
 	nrf_radio_publish_set(NRF_RADIO, NRF_RADIO_EVENT_DISABLED,
 			      HAL_DISABLE_PALNA_PPI);
 
+	#if defined(CONFIG_SOC_COMPATIBLE_NRF54LX)
+		/* First hop: DPPIC10 -> DPPIC20 (required for all nRF54Lx FEM paths) */
+		nrf_dppi_channels_enable(NRF_DPPIC20,
+					BIT(HAL_ENABLE_PALNA_PPI) | BIT(HAL_DISABLE_PALNA_PPI));
+
+		nrf_ppib_subscribe_set(NRF_PPIB11, HAL_PPIB_SEND_ENABLE_PALNA_PPI, HAL_ENABLE_PALNA_PPI);
+		nrf_ppib_publish_set(NRF_PPIB21, HAL_PPIB_RECEIVE_ENABLE_PALNA_PPI, HAL_ENABLE_PALNA_PPI);
+
+		nrf_ppib_subscribe_set(NRF_PPIB11, HAL_PPIB_SEND_DISABLE_PALNA_PPI, HAL_DISABLE_PALNA_PPI);
+		nrf_ppib_publish_set(NRF_PPIB21, HAL_PPIB_RECEIVE_DISABLE_PALNA_PPI, HAL_DISABLE_PALNA_PPI);
+
+		#if NRF_DT_GPIOTE_INST(FEM_NODE, HAL_RADIO_GPIO_PA_PROP) == 30
+		/* Second hop: DPPIC20 -> DPPIC30 (FEM on gpio0/gpiote30, e.g. hwn001) */
+		nrf_dppi_channels_enable(NRF_DPPIC30,
+					BIT(HAL_ENABLE_PALNA_PPI) | BIT(HAL_DISABLE_PALNA_PPI));
+
+		nrf_ppib_subscribe_set(NRF_PPIB22, HAL_PPIB_SEND_ENABLE_PALNA_PPI, HAL_ENABLE_PALNA_PPI);
+		nrf_ppib_publish_set(NRF_PPIB30, HAL_PPIB_RECEIVE_ENABLE_PALNA_PPI, HAL_ENABLE_PALNA_PPI);
+
+		nrf_ppib_subscribe_set(NRF_PPIB22, HAL_PPIB_SEND_DISABLE_PALNA_PPI, HAL_DISABLE_PALNA_PPI);
+		nrf_ppib_publish_set(NRF_PPIB30, HAL_PPIB_RECEIVE_DISABLE_PALNA_PPI, HAL_DISABLE_PALNA_PPI);
+		#endif /* NRF_DT_GPIOTE_INST == 30 */
+	#endif /* CONFIG_SOC_COMPATIBLE_NRF54LX */
+
 #if !defined(HAL_RADIO_FEM_IS_NRF21540)
 	nrf_gpiote_task_t task;
 
@@ -62,6 +86,15 @@ static inline void hal_fem_ppi_setup(void)
 			      HAL_ENABLE_FEM_PPI);
 	nrf_radio_publish_set(NRF_RADIO, NRF_RADIO_EVENT_DISABLED,
 			      HAL_DISABLE_FEM_PPI);
+
+	#if defined(CONFIG_SOC_COMPATIBLE_NRF54LX)
+		/* Enable DPPI in Peripheral domain (20) */
+		nrf_dppi_channels_enable(NRF_DPPIC20, BIT(HAL_ENABLE_FEM_PPI));
+
+		/* Bridge SEND (Radio) -> RECEIVE (Peripheral) */
+		nrf_ppib_subscribe_set(NRF_PPIB11, HAL_PPIB_SEND_ENABLE_FEM_PPI, HAL_ENABLE_FEM_PPI);
+		nrf_ppib_publish_set(NRF_PPIB21, HAL_PPIB_RECEIVE_ENABLE_FEM_PPI, HAL_ENABLE_FEM_PPI);
+	#endif
 
 	hal_gpiote_tasks_setup(gpiote_pdn.p_reg, gpiote_ch_pdn,
 			       IS_ENABLED(HAL_RADIO_GPIO_NRF21540_PDN_POL_INV),
