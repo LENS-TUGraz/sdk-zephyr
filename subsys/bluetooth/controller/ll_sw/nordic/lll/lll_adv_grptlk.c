@@ -821,6 +821,23 @@ static void isr_tx_common(void *param, radio_isr_cb_t isr_tx, radio_isr_cb_t isr
 		radio_pkt_tx_set(
 			radio_ccm_iso_tx_pkt_set(&lll->ccm_tx, RADIO_PKT_CONF_PDU_TYPE_BIS, pdu));
 	} else {
+		/* FIX: Explicitly set ll_id for retransmissions to prevent stale data from
+		 * flexible array member causing incorrect Control PDU transmission.
+		 *
+		 * Root cause: The node_tx_iso struct uses flexible array member pdu[],
+		 * which is NOT zero-initialized when allocated. When reused for retransmissions,
+		 * stale ll_id=0x03 (Control PDU) values can persist from previous use.
+		 *
+		 * This particularly manifests with nRF54L15 + FEM (RADIO_ENABLE_FAST=n) where
+		 * timing changes cause buffer reuse patterns to shift.
+		 *
+		 * Solution: Always explicitly set ll_id based on current transmission state.
+		 */
+		if (lll->bn_curr >= lll->bn) {
+			pdu->ll_id = PDU_BIS_LLID_COMPLETE_END;
+		} else {
+			pdu->ll_id = PDU_BIS_LLID_START_CONTINUE;
+		}
 		radio_pkt_tx_set(pdu);
 	}
 
