@@ -1030,7 +1030,6 @@ static void setup_rx_mode(struct lll_adv_iso *lll, uint8_t bis)
 	uint8_t access_addr[4];
 	uint16_t data_chan_id;
 	uint8_t crc_init[3];
-	uint8_t pkt_flags;
 	uint32_t hcto;
 	uint32_t start_us;
 
