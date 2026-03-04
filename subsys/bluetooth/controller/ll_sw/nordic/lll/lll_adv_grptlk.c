@@ -745,6 +745,7 @@ static void isr_tx_common(void *param, radio_isr_cb_t isr_tx, radio_isr_cb_t isr
 		uint16_t stream_handle;
 		struct node_tx_iso *tx;
 		memq_link_t *link;
+		static struct pdu_bis backup_pdu;
 
 		stream_handle = lll->stream_handle[lll->bis_curr - 1U];
 		stream = ull_adv_grptlk_lll_stream_get(stream_handle);
@@ -761,14 +762,30 @@ static void isr_tx_common(void *param, radio_isr_cb_t isr_tx, radio_isr_cb_t isr
 			} while (link && (tx->payload_count < payload_count));
 		}
 		if (!link || (tx->payload_count != payload_count)) {
-			/* During startup when TX queue is not yet populated, transmit valid minimal PDU */
+			/* If queue lookup fails during retransmissions due to ULL preemption,
+			 * we cannot just reuse PACKETPTR or the `tx->pdu` pointer because 
+			 * the memory has likely been freed by ULL and overwritten.
+			 * Instead, we maintain a static backup locally during subevent 1.
+			 */
 			pdu = radio_pkt_empty_get();
-			pdu->ll_id =
-				lll->framing ? PDU_BIS_LLID_FRAMED : PDU_BIS_LLID_START_CONTINUE;
-			pdu->len = 1U;
-			pdu->payload[0] = 0x00;
+
+			if (lll->irc_curr > 1 || lll->ptc_curr > 0) {
+				/* Use our safe static copy instead of pure empty initialized */
+				memcpy(pdu, &backup_pdu, sizeof(struct pdu_bis));
+			} else {
+				/* True startup empty PDU */
+				pdu->ll_id =
+					lll->framing ? PDU_BIS_LLID_FRAMED : PDU_BIS_LLID_START_CONTINUE;
+				pdu->len = 1U;
+				pdu->payload[0] = 0x00;
+			}
 		} else {
 			pdu = (void *)tx->pdu;
+
+			/* Save a copy on the first successful transmission (Subevent 1) */
+			if (lll->irc_curr == 1 && lll->ptc_curr == 0) {
+				memcpy(&backup_pdu, pdu, sizeof(struct pdu_bis));
+			}
 		}
 		pdu->cssn = lll->cssn;
 		pdu->cstf = (lll->term_req || !!(lll->chm_req - lll->chm_ack));
