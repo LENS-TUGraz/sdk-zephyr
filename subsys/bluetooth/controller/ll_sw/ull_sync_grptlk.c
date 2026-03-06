@@ -240,89 +240,89 @@ uint8_t ll_grptlk_sync_create(uint8_t big_handle, uint16_t sync_handle, uint8_t 
 	return BT_HCI_ERR_SUCCESS;
 }
 
-// uint8_t ll_big_sync_terminate(uint8_t big_handle, void **rx)
-// {
-// 	static memq_link_t link;
-// 	static struct mayfly mfy = {0, 0, &link, NULL, lll_flush};
+uint8_t ll_grptlk_big_sync_terminate(uint8_t big_handle, void **rx)
+{
+	static memq_link_t link;
+	static struct mayfly mfy = {0, 0, &link, NULL, lll_flush};
 
-// 	struct ll_sync_iso_set *sync_iso;
-// 	memq_link_t *link_sync_estab;
-// 	struct node_rx_pdu *node_rx;
-// 	memq_link_t *link_sync_lost;
-// 	struct ll_sync_set *sync;
-// 	struct k_sem sem;
-// 	uint32_t ret;
-// 	int err;
+	struct ll_sync_iso_set *sync_iso;
+	memq_link_t *link_sync_estab;
+	struct node_rx_pdu *node_rx;
+	memq_link_t *link_sync_lost;
+	struct ll_sync_set *sync;
+	struct k_sem sem;
+	uint32_t ret;
+	int err;
 
-// 	sync_iso = sync_iso_get(big_handle);
-// 	if (!sync_iso) {
-// 		return BT_HCI_ERR_UNKNOWN_ADV_IDENTIFIER;
-// 	}
+	sync_iso = sync_iso_get(big_handle);
+	if (!sync_iso) {
+		return BT_HCI_ERR_UNKNOWN_ADV_IDENTIFIER;
+	}
 
-// 	sync = sync_iso->sync;
-// 	if (sync && sync->iso.sync_iso) {
-// 		struct node_rx_sync_iso *se;
+	sync = sync_iso->sync;
+	if (sync && sync->iso.sync_iso) {
+		struct node_rx_sync_iso *se;
 
-// 		if (sync->iso.sync_iso != sync_iso) {
-// 			return BT_HCI_ERR_CMD_DISALLOWED;
-// 		}
-// 		sync->iso.sync_iso = NULL;
+		if (sync->iso.sync_iso != sync_iso) {
+			return BT_HCI_ERR_CMD_DISALLOWED;
+		}
+		sync->iso.sync_iso = NULL;
 
-// 		node_rx = sync->iso.node_rx_estab;
-// 		link_sync_estab = node_rx->hdr.link;
-// 		link_sync_lost = sync_iso->node_rx_lost.rx.hdr.link;
+		node_rx = sync->iso.node_rx_estab;
+		link_sync_estab = node_rx->hdr.link;
+		link_sync_lost = sync_iso->node_rx_lost.rx.hdr.link;
 
-// 		ll_rx_link_release(link_sync_lost);
-// 		ll_rx_link_release(link_sync_estab);
-// 		ll_rx_release(node_rx);
+		ll_rx_link_release(link_sync_lost);
+		ll_rx_link_release(link_sync_estab);
+		ll_rx_release(node_rx);
 
-// 		node_rx = (void *)&sync_iso->node_rx_lost;
-// 		node_rx->hdr.type = NODE_RX_TYPE_SYNC_ISO;
-// 		node_rx->hdr.handle = big_handle;
+		node_rx = (void *)&sync_iso->node_rx_lost;
+		node_rx->hdr.type = NODE_RX_TYPE_SYNC_ISO;
+		node_rx->hdr.handle = big_handle;
 
-// 		/* NOTE: Since NODE_RX_TYPE_SYNC_ISO is only generated from ULL
-// 		 *       context, pass ULL context as parameter.
-// 		 */
-// 		node_rx->rx_ftr.param = sync_iso;
+		/* NOTE: Since NODE_RX_TYPE_SYNC_ISO is only generated from ULL
+		 *       context, pass ULL context as parameter.
+		 */
+		node_rx->rx_ftr.param = sync_iso;
 
-// 		/* NOTE: struct node_rx_lost has uint8_t member store the reason.
-// 		 */
-// 		se = (void *)node_rx->pdu;
-// 		se->status = BT_HCI_ERR_OP_CANCELLED_BY_HOST;
+		/* NOTE: struct node_rx_lost has uint8_t member store the reason.
+		 */
+		se = (void *)node_rx->pdu;
+		se->status = BT_HCI_ERR_OP_CANCELLED_BY_HOST;
 
-// 		*rx = node_rx;
+		*rx = node_rx;
 
-// 		return BT_HCI_ERR_SUCCESS;
-// 	}
+		return BT_HCI_ERR_SUCCESS;
+	}
 
-// 	err = ull_ticker_stop_with_mark((TICKER_ID_SCAN_SYNC_ISO_BASE +
-// 					 sync_iso_handle_to_index(big_handle)),
-// 					 sync_iso, &sync_iso->lll);
-// 	LL_ASSERT_INFO2(err == 0 || err == -EALREADY, big_handle, err);
-// 	if (err) {
-// 		return BT_HCI_ERR_CMD_DISALLOWED;
-// 	}
+	err = ull_ticker_stop_with_mark((TICKER_ID_SCAN_SYNC_ISO_BASE +
+					 sync_iso_handle_to_index(big_handle)),
+					 sync_iso, &sync_iso->lll);
+	LL_ASSERT_INFO2(err == 0 || err == -EALREADY, big_handle, err);
+	if (err) {
+		return BT_HCI_ERR_CMD_DISALLOWED;
+	}
 
-// 	/* Do a blocking mayfly call to LLL context for flushing any outstanding
-// 	 * operations.
-// 	 */
-// 	sync_iso->flush_sem = &sem;
-// 	k_sem_init(&sem, 0, 1);
-// 	mfy.param = &sync_iso->lll;
+	/* Do a blocking mayfly call to LLL context for flushing any outstanding
+	 * operations.
+	 */
+	sync_iso->flush_sem = &sem;
+	k_sem_init(&sem, 0, 1);
+	mfy.param = &sync_iso->lll;
 
-// 	ret = mayfly_enqueue(TICKER_USER_ID_THREAD, TICKER_USER_ID_LLL, 0, &mfy);
-// 	LL_ASSERT(!ret);
-// 	k_sem_take(&sem, K_FOREVER);
-// 	sync_iso->flush_sem = NULL;
+	ret = mayfly_enqueue(TICKER_USER_ID_THREAD, TICKER_USER_ID_LLL, 0, &mfy);
+	LL_ASSERT(!ret);
+	k_sem_take(&sem, K_FOREVER);
+	sync_iso->flush_sem = NULL;
 
-// 	/* Release resources */
-// 	ull_sync_iso_stream_release(sync_iso);
+	/* Release resources */
+	ull_sync_grptlk_stream_release(sync_iso);
 
-// 	link_sync_lost = sync_iso->node_rx_lost.rx.hdr.link;
-// 	ll_rx_link_release(link_sync_lost);
+	link_sync_lost = sync_iso->node_rx_lost.rx.hdr.link;
+	ll_rx_link_release(link_sync_lost);
 
-// 	return BT_HCI_ERR_SUCCESS;
-// }
+	return BT_HCI_ERR_SUCCESS;
+}
 
 int ull_sync_grptlk_init(void)
 {
