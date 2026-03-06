@@ -4,6 +4,8 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
+#include "util/mem.h"
+
 /* The Aux Offset shall be at least the length of the packet plus T_MAFS */
 #define PDU_ADV_AUX_OFFSET_MIN_US 300
 
