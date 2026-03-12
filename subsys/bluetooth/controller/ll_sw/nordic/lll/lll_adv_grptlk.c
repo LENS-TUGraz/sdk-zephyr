@@ -53,6 +53,7 @@ static void isr_tx_normal(void *param);
 static void isr_tx_common(void *param, radio_isr_cb_t isr_tx, radio_isr_cb_t isr_done, bool is_create);
 static void isr_rx_grptlk(void *param);
 static void setup_rx_mode(struct lll_adv_iso *lll, uint8_t bis);
+static void skip_remaining_rx_retries(struct lll_adv_iso *lll);
 static void isr_rx_iso_data_valid(const struct lll_adv_iso *const lll,
 				  uint16_t handle, struct node_rx_pdu *node_rx);
 // #if defined(CONFIG_BT_CTLR_ADV_ISO_SEQUENTIAL)
@@ -1006,6 +1007,39 @@ static void isr_done_term(void *param)
 	lll_isr_cleanup(param);
 }
 
+static void skip_remaining_rx_retries(struct lll_adv_iso *lll)
+{
+	uint8_t access_addr[4];
+	uint16_t data_chan_id;
+	uint32_t subevents_per_bis;
+	uint32_t subevent_slot;
+	uint32_t remaining_subevents;
+
+	if ((lll->bn_curr >= lll->bn) &&
+	    (lll->irc_curr >= lll->irc) &&
+	    (lll->ptc_curr >= lll->ptc)) {
+		return;
+	}
+
+	subevents_per_bis = ((uint32_t)lll->bn * lll->irc) + lll->ptc;
+	subevent_slot = ((uint32_t)(lll->irc_curr - 1U) * lll->bn) +
+			(lll->bn_curr - 1U) + lll->ptc_curr;
+	if ((subevent_slot + 1U) >= subevents_per_bis) {
+		return;
+	}
+
+	remaining_subevents = (subevents_per_bis - 1U) - subevent_slot;
+
+	util_bis_aa_le32(lll->bis_curr, lll->seed_access_addr, access_addr);
+	data_chan_id = lll_chan_id(access_addr);
+
+	while (remaining_subevents--) {
+		(void)lll_chan_iso_subevent(data_chan_id, lll->data_chan_map,
+					    lll->data_chan_count, &lll->data_chan.prn_s,
+					    &lll->data_chan.remap_idx);
+	}
+}
+
 /* Setup RX mode for receiving on non-first BISes */
 static void setup_rx_mode(struct lll_adv_iso *lll, uint8_t bis)
 {
@@ -1013,6 +1047,9 @@ static void setup_rx_mode(struct lll_adv_iso *lll, uint8_t bis)
 	uint8_t access_addr[4];
 	uint16_t data_chan_id;
 	uint8_t crc_init[3];
+	const uint16_t event_counter = (lll->payload_count / lll->bn) - 1U;
+	const bool is_sequential_packing = (lll->bis_spacing >= (lll->sub_interval * lll->nse));
+	uint8_t data_chan_use;
 	uint32_t hcto;
 	uint32_t start_us;
 
@@ -1043,11 +1080,30 @@ static void setup_rx_mode(struct lll_adv_iso *lll, uint8_t bis)
 	/* Setup RX packet buffer */
 	radio_pkt_rx_set(node_rx->pdu);
 
-	/* Calculate channel for this BIS */
-	const uint16_t event_counter = (lll->payload_count / lll->bn) - 1U;
-	uint8_t data_chan_use = lll_chan_iso_event(event_counter, data_chan_id, lll->data_chan_map,
+	/* Calculate channel for this subevent */
+	if (is_sequential_packing) {
+		const bool first_subevent = (lll->bn_curr == 1U) &&
+					    (lll->irc_curr == 1U) &&
+					    (lll->ptc_curr == 0U);
+
+		if (first_subevent) {
+			data_chan_use = lll_chan_iso_event(event_counter, data_chan_id,
+							   lll->data_chan_map,
+							   lll->data_chan_count,
+							   &lll->data_chan.prn_s,
+							   &lll->data_chan.remap_idx);
+		} else {
+			data_chan_use = lll_chan_iso_subevent(data_chan_id, lll->data_chan_map,
+							      lll->data_chan_count,
+							      &lll->data_chan.prn_s,
+							      &lll->data_chan.remap_idx);
+		}
+	} else {
+		/* Interleaved mode falls back to event channel selection here. */
+		data_chan_use = lll_chan_iso_event(event_counter, data_chan_id, lll->data_chan_map,
 						   lll->data_chan_count, &lll->data_chan.prn_s,
 						   &lll->data_chan.remap_idx);
+	}
 	lll_chan_set(data_chan_use);
 
 	/* ATTENTION: */
@@ -1058,12 +1114,17 @@ static void setup_rx_mode(struct lll_adv_iso *lll, uint8_t bis)
 	radio_tmr_tx_disable();
 	radio_tmr_rx_enable();
 
-	/* Calculate timing for this BIS */
-	const bool is_sequential_packing = (lll->bis_spacing >= (lll->sub_interval * lll->nse));
+	/* Calculate timing for this subevent */
 	uint32_t bis_offset_us;
 
 	if (is_sequential_packing) {
-		bis_offset_us = (bis - 1U) * lll->sub_interval * lll->nse;
+		const uint32_t subevents_per_bis = (lll->bn * lll->irc) + lll->ptc;
+		const uint32_t subevent_slot = ((lll->irc_curr - 1U) * lll->bn) +
+					       (lll->bn_curr - 1U) + lll->ptc_curr;
+		const uint32_t nse = ((uint32_t)(bis - 1U) * subevents_per_bis) +
+				     subevent_slot;
+
+		bis_offset_us = lll->sub_interval * nse;
 	} else {
 		bis_offset_us = (bis - 1U) * lll->bis_spacing;
 	}
@@ -1124,6 +1185,8 @@ static void setup_rx_mode(struct lll_adv_iso *lll, uint8_t bis)
 static void isr_rx_grptlk(void *param)
 {
 	struct lll_adv_iso *lll = param;
+	const bool is_sequential_packing = (lll->bis_spacing >= (lll->sub_interval * lll->nse));
+	bool rx_forwarded = false;
 	uint8_t trx_done;
 	uint8_t crc_ok;
 
@@ -1165,22 +1228,72 @@ static void isr_rx_grptlk(void *param)
 
 				/* Mark as valid ISO data and enqueue for ULL processing */
 				isr_rx_iso_data_valid(lll, bis_handle, node_rx);
+				rx_forwarded = true;
 			}
 		}
 	}
 
-	/* Move to next BIS after completing current RX */
-	lll->bis_curr++;
+	if (is_sequential_packing) {
+		if (rx_forwarded) {
+			/* A valid payload was already delivered for this BIS:
+			 * burn remaining retries and move directly to next BIS.
+			 */
+			skip_remaining_rx_retries(lll);
 
-	if (lll->bis_curr <= lll->num_bis) {
-		/* Setup RX for next BIS */
+			if (lll->bis_curr < lll->num_bis) {
+				lll->bis_curr++;
+				lll->bn_curr = 1U;
+				lll->irc_curr = 1U;
+				lll->ptc_curr = 0U;
+				setup_rx_mode(lll, lll->bis_curr);
+			} else {
+				lll->bis_curr = 1U;
+				lll->bn_curr = 1U;
+				lll->irc_curr = 1U;
+				lll->ptc_curr = 0U;
+				radio_isr_set(isr_tx_normal, lll);
+			}
+
+			goto done;
+		}
+
+		/* Sequential mode: walk retries (BN/IRC/PTC) before moving to next BIS. */
+		if (lll->bn_curr < lll->bn) {
+			lll->bn_curr++;
+		} else if (lll->irc_curr < lll->irc) {
+			lll->bn_curr = 1U;
+			lll->irc_curr++;
+		} else if (lll->ptc_curr < lll->ptc) {
+			lll->ptc_curr++;
+		} else if (lll->bis_curr < lll->num_bis) {
+			lll->bis_curr++;
+			lll->bn_curr = 1U;
+			lll->irc_curr = 1U;
+			lll->ptc_curr = 0U;
+		} else {
+			/* All BIS retry slots processed, continue TX flow on BIS 1. */
+			lll->bis_curr = 1U;
+			lll->bn_curr = 1U;
+			lll->irc_curr = 1U;
+			lll->ptc_curr = 0U;
+			radio_isr_set(isr_tx_normal, lll);
+			goto done;
+		}
+
 		setup_rx_mode(lll, lll->bis_curr);
 	} else {
-		/* All BISes processed, return to TX on BIS 1 */
-		lll->bis_curr = 1U;
-		radio_isr_set(isr_tx_normal, lll);
+		/* Interleaved mode: keep existing per-BIS single RX hop behavior. */
+		lll->bis_curr++;
+
+		if (lll->bis_curr <= lll->num_bis) {
+			setup_rx_mode(lll, lll->bis_curr);
+		} else {
+			lll->bis_curr = 1U;
+			radio_isr_set(isr_tx_normal, lll);
+		}
 	}
 
+done:
 	if (IS_ENABLED(CONFIG_BT_CTLR_PROFILE_ISR)) {
 		lll_prof_cputime_capture();
 		lll_prof_send();
