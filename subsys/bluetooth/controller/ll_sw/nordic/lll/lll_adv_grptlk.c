@@ -56,6 +56,9 @@ static void setup_rx_mode(struct lll_adv_iso *lll, uint8_t bis);
 static void skip_remaining_rx_retries(struct lll_adv_iso *lll);
 static void isr_rx_iso_data_valid(const struct lll_adv_iso *const lll,
 				  uint16_t handle, struct node_rx_pdu *node_rx);
+static void isr_rx_iso_data_invalid(const struct lll_adv_iso *const lll,
+				    uint16_t handle, struct node_rx_pdu *node_rx);
+static void isr_rx_done_grptlk(struct lll_adv_iso *lll);
 // #if defined(CONFIG_BT_CTLR_ADV_ISO_SEQUENTIAL)
 static void next_chan_calc_seq(struct lll_adv_iso *lll, uint16_t event_counter,
 			       uint16_t data_chan_id);
@@ -219,6 +222,9 @@ static int prepare_cb_common(struct lll_prepare_param *p)
 	lll->ptc_curr = 0U;
 	lll->irc_curr = 1U;
 	lll->bn_curr = 1U;
+
+	/* Clear uplink payload slots — NULL means no valid PDU received yet */
+	(void)memset(lll->uplink_payload, 0, sizeof(lll->uplink_payload));
 
 	/* Calculate the Access Address for the BIS event */
 	util_bis_aa_le32(lll->bis_curr, lll->seed_access_addr, access_addr);
@@ -691,6 +697,9 @@ static void isr_tx_common(void *param, radio_isr_cb_t isr_tx, radio_isr_cb_t isr
 				}
 			} while (link);
 		}
+
+		/* Emit missed-PDU notifications for uplink BISes not received */
+		isr_rx_done_grptlk(lll);
 
 		/* Close the BIG event as no more subevents */
 		radio_isr_set(isr_done, lll);
@@ -1226,6 +1235,9 @@ static void isr_rx_grptlk(void *param)
 				/* Convert stream handle to BIS handle for host */
 				bis_handle = LL_BIS_ADV_HANDLE_FROM_IDX(stream_handle);
 
+				/* Mark slot so isr_rx_done_grptlk skips this BIS */
+				lll->uplink_payload[lll->bis_curr - 2U][0] = node_rx;
+
 				/* Mark as valid ISO data and enqueue for ULL processing */
 				isr_rx_iso_data_valid(lll, bis_handle, node_rx);
 				rx_forwarded = true;
@@ -1247,6 +1259,8 @@ static void isr_rx_grptlk(void *param)
 				lll->ptc_curr = 0U;
 				setup_rx_mode(lll, lll->bis_curr);
 			} else {
+				/* All BISes processed - emit missed notifications before returning to TX */
+				isr_rx_done_grptlk(lll);
 				lll->bis_curr = 1U;
 				lll->bn_curr = 1U;
 				lll->irc_curr = 1U;
@@ -1272,6 +1286,7 @@ static void isr_rx_grptlk(void *param)
 			lll->ptc_curr = 0U;
 		} else {
 			/* All BIS retry slots processed, continue TX flow on BIS 1. */
+			isr_rx_done_grptlk(lll);
 			lll->bis_curr = 1U;
 			lll->bn_curr = 1U;
 			lll->irc_curr = 1U;
@@ -1300,13 +1315,16 @@ done:
 	}
 }
 
+/* Per-uplink-BIS payload counter (indices 0-3 for BIS2-BIS5) */
+static uint64_t uplink_rx_payload_count[4];
+
 /* Helper function to mark received ISO data as valid and forward to ULL */
 static void isr_rx_iso_data_valid(const struct lll_adv_iso *const lll,
 				  uint16_t handle, struct node_rx_pdu *node_rx)
 {
 	struct lll_adv_iso_stream *stream;
 	struct node_rx_iso_meta *iso_meta;
-	static uint64_t bis2_rx_payload_count = 0;
+	uint8_t bis_idx = lll->bis_curr - 2U;
 
 	/* Mark node as ISO PDU type */
 	node_rx->hdr.type = NODE_RX_TYPE_ISO_PDU;
@@ -1316,15 +1334,81 @@ static void isr_rx_iso_data_valid(const struct lll_adv_iso *const lll,
 	iso_meta = &node_rx->rx_iso_meta;
 
 	/* For broadcaster RX, track received BIS packets with dedicated counter */
-	iso_meta->payload_number = bis2_rx_payload_count++;
+	iso_meta->payload_number = uplink_rx_payload_count[bis_idx]++;
 
 	/* Calculate timestamp based on radio timer */
 	stream = ull_adv_grptlk_lll_stream_get(lll->stream_handle[lll->bis_curr - 1U]);
 	iso_meta->timestamp = HAL_TICKER_TICKS_TO_US(radio_tmr_start_get()) +
 			      radio_tmr_aa_restore() -
 			      addr_us_get(lll->phy);
-	iso_meta->status = 0; /* Valid data */
+	iso_meta->status = 0U; /* Valid data */
 
 	/* Link the node into the ISO RX queue for ULL processing */
 	ll_iso_rx_put(node_rx->hdr.link, node_rx);
+}
+
+/* Helper function to notify host of a missed/invalid uplink PDU */
+static void isr_rx_iso_data_invalid(const struct lll_adv_iso *const lll,
+				    uint16_t handle, struct node_rx_pdu *node_rx)
+{
+	struct node_rx_iso_meta *iso_meta;
+	uint8_t bis_idx = lll->bis_curr - 2U;
+
+	node_rx->hdr.type   = NODE_RX_TYPE_ISO_PDU;
+	node_rx->hdr.handle = handle;
+
+	iso_meta = &node_rx->rx_iso_meta;
+
+	/* Assign sequential payload number so host can detect gaps */
+	iso_meta->payload_number = uplink_rx_payload_count[bis_idx]++;
+
+	/* Best-effort anchor timestamp — no aa_restore available after missed RX */
+	iso_meta->timestamp = HAL_TICKER_TICKS_TO_US(radio_tmr_start_get());
+
+	iso_meta->status = 1U; /* ISOAL_PDU_STATUS_ERRORS — matches lll_sync_iso.c */
+
+	/* Zero pdu->len so grptlk_pdu_to_hci() hits its pdu->len==0 early-return
+	 * and does not forward stale DMA buffer content as payload.
+	 * Recycled node_rx buffers retain len=20 from prior successful receptions. */
+	((struct pdu_bis *)node_rx->pdu)->len = 0U;
+
+	/* Clear payload buffer to prevent stale data from being forwarded */
+	memset(((struct pdu_bis *)node_rx->pdu)->payload, 0, 20);
+
+	ll_iso_rx_put(node_rx->hdr.link, node_rx);
+}
+
+/* Drain missed uplink BISes at end of BIG event — mirrors isr_rx_done() in lll_sync_iso.c */
+static void isr_rx_done_grptlk(struct lll_adv_iso *lll)
+{
+	/* lll->num_bis includes BIS1 (downlink); uplink BISes start at index 1.
+	 * bis_idx 0 = BIS2, ..., bis_idx (num_bis-2) = BIS(num_bis).
+	 */
+	for (uint8_t bis_idx = 0U; bis_idx < (lll->num_bis - 1U); bis_idx++) {
+		if (lll->uplink_payload[bis_idx][0] != NULL) {
+			/* Valid PDU already forwarded for this BIS — nothing to do */
+			continue;
+		}
+
+		/* No valid PDU received for this BIS this event — emit missed notification */
+		struct node_rx_pdu *node_rx = ull_iso_pdu_rx_alloc_peek(1U);
+
+		if (!node_rx) {
+			/* No buffer available — skip silently */
+			continue;
+		}
+		ull_iso_pdu_rx_alloc();
+
+		/* bis_curr equivalent for this index: bis_idx + 2 (BIS2 = bis_idx 0) */
+		uint8_t bis_curr_saved = lll->bis_curr;
+
+		lll->bis_curr = bis_idx + 2U;
+
+		uint16_t stream_handle = lll->stream_handle[lll->bis_curr - 1U];
+		uint16_t bis_handle    = LL_BIS_ADV_HANDLE_FROM_IDX(stream_handle);
+
+		isr_rx_iso_data_invalid(lll, bis_handle, node_rx);
+
+		lll->bis_curr = bis_curr_saved;
+	}
 }
