@@ -1207,7 +1207,8 @@ static void isr_rx_grptlk(void *param)
 		crc_ok = 0U;
 	}
 
-	// printk("%s: trx_done %u crc %u\n", __func__, trx_done, crc_ok);
+	/* Debug: uncomment to see per-packet reception status */
+	// printk("%s: bis=%u trx=%u crc=%u\n", __func__, lll->bis_curr, trx_done, crc_ok);
 
 	/* Clear radio status */
 	lll_isr_rx_status_reset();
@@ -1220,26 +1221,30 @@ static void isr_rx_grptlk(void *param)
 		node_rx = ull_iso_pdu_rx_alloc_peek(1U);
 		if (node_rx) {
 			struct pdu_bis *pdu = (void *)node_rx->pdu;
+			uint16_t stream_handle;
+			uint16_t bis_handle;
 
-			/* Forward only if PDU has valid payload length */
+			/* Debug: uncomment to see PDU details */
+			// printk("%s: bis=%u crc=1 len=%u\n", __func__, lll->bis_curr, pdu->len);
+
+			/* Consume the RX buffer regardless of payload length */
+			ull_iso_pdu_rx_alloc();
+
+			/* Get stream handle for current BIS (index = bis_curr - 1) */
+			stream_handle = lll->stream_handle[lll->bis_curr - 1U];
+
+			/* Convert stream handle to BIS handle for host */
+			bis_handle = LL_BIS_ADV_HANDLE_FROM_IDX(stream_handle);
+
 			if (pdu->len > 0) {
-				uint16_t stream_handle;
-				uint16_t bis_handle;
-
-				/* Allocate next RX buffer for future receptions */
-				ull_iso_pdu_rx_alloc();
-
-				/* Get stream handle for current BIS (index = bis_curr - 1) */
-				stream_handle = lll->stream_handle[lll->bis_curr - 1U];
-
-				/* Convert stream handle to BIS handle for host */
-				bis_handle = LL_BIS_ADV_HANDLE_FROM_IDX(stream_handle);
-
-				/* Mark slot so isr_rx_done_grptlk skips this BIS */
+				/* Valid payload */
 				lll->uplink_payload[lll->bis_curr - 2U][0] = node_rx;
-
-				/* Mark as valid ISO data and enqueue for ULL processing */
 				isr_rx_iso_data_valid(lll, bis_handle, node_rx);
+				rx_forwarded = true;
+			} else {
+				/* Valid CRC but zero-length payload — treat as invalid immediately
+				 * so isr_rx_done_grptlk doesn't generate a duplicate notification */
+				isr_rx_iso_data_invalid(lll, bis_handle, node_rx);
 				rx_forwarded = true;
 			}
 		}
