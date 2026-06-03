@@ -254,8 +254,12 @@ static void grptlk_pdu_to_hci(uint16_t handle, struct node_rx_pdu *node_rx)
 
 	/* Validate PDU length before processing */
 	if (pdu->len == 0) {
-		/* Empty BIS padding PDU; nothing to forward */
-		return;
+		/* Check if this is a missed packet (status=1) or just padding (status=0) */
+		if (node_rx->rx_iso_meta.status == 0) {
+			/* Empty BIS padding PDU; nothing to forward */
+			return;
+		}
+		/* status != 0: missed/invalid packet - still deliver to host with error flag */
 	}
 
 	if (pdu->len > 251) {

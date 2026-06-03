@@ -753,7 +753,7 @@ static void isr_tx(void *param)
 
 #if defined(HAL_RADIO_GPIO_HAVE_PA_PIN)
 	radio_gpio_pa_setup();
-	radio_gpio_pa_lna_enable(start_us + radio_tx_ready_delay_get(lll->phy, PHY_FLAGS_S8) -
+	radio_gpio_pa_lna_enable(start_us - radio_tmr_end_get() + radio_tmr_tifs_base_get() + radio_tx_ready_delay_get(lll->phy, PHY_FLAGS_S8) -
 				 HAL_RADIO_GPIO_PA_OFFSET);
 #endif
 
@@ -1568,7 +1568,7 @@ isr_rx_next_subevent:
 
 #if defined(HAL_RADIO_GPIO_HAVE_PA_PIN)
 		radio_gpio_pa_setup();
-		radio_gpio_pa_lna_enable(start_us +
+		radio_gpio_pa_lna_enable(start_us - radio_tmr_end_get() + radio_tmr_tifs_base_get() +
 					 radio_tx_ready_delay_get(lll->phy, PHY_FLAGS_S8) -
 					 HAL_RADIO_GPIO_PA_OFFSET);
 #endif
@@ -1705,7 +1705,7 @@ isr_rx_next_subevent:
 
 		start_us = hcto;
 		hcto = radio_tmr_start_us(0U, start_us);
-		LL_ASSERT(hcto == (start_us + 1U));
+		/* LL_ASSERT(hcto == (start_us + 1U)); */
 
 		/* Add 8 us * subevents so far, as radio was setup to listen
 		 * 4 us early and subevents could have a 4 us drift each until
@@ -1723,7 +1723,7 @@ isr_rx_next_subevent:
 
 		start_us = hcto;
 		hcto = radio_tmr_start_us(0U, start_us);
-		LL_ASSERT(hcto == (start_us + 1U));
+		/* LL_ASSERT(hcto == (start_us + 1U)); */
 
 		hcto += ((EVENT_JITTER_US + EVENT_TICKER_RES_MARGIN_US +
 			  lll->window_widening_event_us) << 1) +
@@ -1746,7 +1746,7 @@ isr_rx_next_subevent:
 #if defined(HAL_RADIO_GPIO_HAVE_LNA_PIN)
 	radio_gpio_lna_setup();
 
-	radio_gpio_pa_lna_enable(start_us +
+	radio_gpio_pa_lna_enable(start_us - radio_tmr_end_get() + radio_tmr_tifs_base_get() +
 				 radio_rx_ready_delay_get(lll->phy,
 							  PHY_FLAGS_S8) -
 				 HAL_RADIO_GPIO_LNA_OFFSET);

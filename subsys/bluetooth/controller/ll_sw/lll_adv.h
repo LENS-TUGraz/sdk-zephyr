@@ -114,6 +114,14 @@ struct lll_adv_iso {
 #ifdef CONFIG_GRPTLK
 	/* Temporary storage for RX node when receiving on BIS > 1 */
 	struct node_rx_pdu *node_rx_pending;
+
+	/* Per-uplink-BIS payload slot for missed-PDU detection.
+	 * Index [bis_idx][0], where bis_idx = bis_curr - 2 (BIS2=0 .. BIS<N>=<N>-2).
+	 * Set to non-NULL when a valid PDU was received for that BIS this event.
+	 * Cleared to NULL in prepare_cb_common() at the start of each event.
+	 * Sized for STREAM_MAX-1 uplink BISes (BIS1 is downlink, BIS2+ are uplink).
+	 */
+	struct node_rx_pdu *uplink_payload[CONFIG_BT_CTLR_ADV_ISO_STREAM_MAX - 1][1];
 #endif /* CONFIG_GRPTLK */
 };
 

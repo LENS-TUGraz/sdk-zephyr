@@ -1904,7 +1904,11 @@ static void le_big_terminate_sync(struct net_buf *buf, struct net_buf **evt,
 	uint8_t status;
 
 	big_handle = cmd->big_handle;
+#ifdef CONFIG_GRPTLK
+	status = ll_grptlk_big_sync_terminate(big_handle, node_rx);
+#else
 	status = ll_big_sync_terminate(big_handle, node_rx);
+#endif /* CONFIG_GRPTLK */
 
 	rp = hci_cmd_complete(evt, sizeof(*rp));
 	rp->status = status;
